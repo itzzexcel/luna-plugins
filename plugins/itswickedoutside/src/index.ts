@@ -1,3 +1,45 @@
+/*
+Le caes a todos bien
+Todos te ríen la gracia
+Tienes un gesto extraño
+A mí no me engañas
+
+Así que eres humilde
+Teniendo un barco en casa
+Arqueaste la ceja
+Porque por mí no pasas
+
+No me mola tu forma de hablar
+No me fío
+No me importa dónde quieres llegar
+No me fío
+
+Estás usando tu control mental
+Quieres hacerme el lío
+No me trago tu juego emocional
+No me fío
+
+No creías tan pronto
+Verte así destapado
+Conmigo no sirve eso
+De hacerte el colocado
+
+Tranquilo, no diré nada
+Me la sudan tus juegos
+Solo mantén la distancia
+Y no me rompas los huevo
+
+No me mola tu forma de hablar
+No me fío
+No me importa dónde quieres llegar
+No me fío
+
+Estás usando tu control mental
+Quieres hacerme el lío
+No me trago tu juego emocional
+No me fío
+*/
+
 import { LunaUnload, Tracer } from "@luna/core";
 import { MediaItem } from "@luna/lib";
 import { GetNPView } from "./ui-interface";
