@@ -45,7 +45,7 @@ import { MediaItem } from "@luna/lib";
 import { GetNPView } from "./ui-interface";
 import createAudioVisualiser, { AudioVisualiserAPI } from "./giragira";
 
-export const { trace, errSignal } = Tracer("[Awesome Lyrics]");
+export const { trace, errSignal } = Tracer("[reactivo]");
 export const unloads = new Set<LunaUnload>();
 
 // Visualiser instance (initially null)
