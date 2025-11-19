@@ -41,7 +41,7 @@ No me fío
 */
 
 import { LunaUnload, Tracer } from "@luna/core";
-import { MediaItem } from "@luna/lib";
+import { MediaItem, redux } from "@luna/lib";
 import { GetNPView } from "./ui-interface";
 import createAudioVisualiser, { AudioVisualiserAPI } from "./giragira";
 
@@ -108,6 +108,15 @@ const initWhenReady = (): void => {
 
 // Start initialization
 initWhenReady();
+
+redux.intercept("view/ENTERED_NOWPLAYING", unloads, function() {
+    visualiser?.reconnect();
+});
+
+redux.intercept("view/EXITED_NOWPLAYING", unloads, function() {
+    // Stop rendering
+    visualiser?.disconnect();
+})
 
 // Cleanup when plugin unloads
 unloads.add(() => {
