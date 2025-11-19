@@ -111,11 +111,17 @@ initWhenReady();
 
 redux.intercept("view/ENTERED_NOWPLAYING", unloads, function() {
     visualiser?.reconnect();
+    if (visualiser?.isConnected) {
+        console.log("reconnected successfully");
+        
+    }
 });
 
 redux.intercept("view/EXITED_NOWPLAYING", unloads, function() {
     // Stop rendering
     visualiser?.disconnect();
+    console.log("visualiser disconnected");
+    
 })
 
 // Cleanup when plugin unloads
