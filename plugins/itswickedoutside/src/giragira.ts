@@ -394,9 +394,9 @@ export class AudioVisualiser implements AudioVisualiserAPI {
         // Apply vignette box-shadow effect with directional emphasis
         const vignetteBoxShadow = `
         inset 0 0 ${currentVignetteSize}px ${currentVignetteBlur}px rgba(255, 255, 255, ${0.4 + currentIntensity * 0.6}),
-        inset 0 0 ${currentVignetteSize * 0.7}px ${currentVignetteBlur * 0.7}px rgba(147, 51, 234, ${currentIntensity * 0.8}),
+        inset 0 0 ${currentVignetteSize * 0.7}px ${currentVignetteBlur * 0.7}px rgba(255, 255, 255, ${currentIntensity * 0.8}),
         inset 0 0 ${currentVignetteSize * 0.5}px ${currentVignetteBlur * 0.5}px rgba(59, 130, 246, ${currentIntensity * 0.6}),
-        inset ${currentVignetteSize * 0.4}px 0 ${currentVignetteBlur * 1.2}px ${currentVignetteBlur * 0.3}px rgba(147, 51, 234, ${leftIntensity}),
+        inset ${currentVignetteSize * 0.4}px 0 ${currentVignetteBlur * 1.2}px ${currentVignetteBlur * 0.3}px rgba(255, 255, 255, ${leftIntensity}),
         inset 0 ${currentVignetteSize * 0.3}px ${currentVignetteBlur * 1.2}px ${currentVignetteBlur * 0.3}px rgba(59, 130, 246, ${bottomIntensity})
     `;
         this.elements.vignette.style.boxShadow = vignetteBoxShadow;
