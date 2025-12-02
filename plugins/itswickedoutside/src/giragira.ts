@@ -43,7 +43,7 @@ export class AudioVisualiser implements AudioVisualiserAPI {
     private ws: WebSocket | null = null;
     private reconnectTimeout: number | null = null;
     private reconnectAttempts = 0;
-    
+
     private elements: {
         vignette: HTMLElement;
         glowLayer: HTMLElement;
@@ -78,7 +78,7 @@ export class AudioVisualiser implements AudioVisualiserAPI {
             lerpFactor: 0.5,
             showStats: false,
             showStatus: false,
-            zIndex: 1000,
+            zIndex: -3,
             ...options,
         };
 
@@ -189,7 +189,7 @@ export class AudioVisualiser implements AudioVisualiserAPI {
             color: #ff3232 !important;
             border: 1px solid rgba(255, 50, 50, 0.3) !important;
             display: ${this.options.showStatus ? 'block' : 'none'} !important;
-            z-index: 10000 !important;
+            z-index: -3 !important;
         `;
 
         const stats = document.createElement('div');
@@ -200,7 +200,7 @@ export class AudioVisualiser implements AudioVisualiserAPI {
             transform: translateX(-50%) !important;
             display: ${this.options.showStats ? 'flex' : 'none'} !important;
             gap: 20px !important;
-            z-index: 100 !important;
+            z-index: -3 !important;
             pointer-events: all !important;
         `;
 
@@ -235,7 +235,7 @@ export class AudioVisualiser implements AudioVisualiserAPI {
 
             stat.appendChild(statLabel);
             stat.appendChild(statValue);
-            
+
             return { stat, value: statValue };
         };
 
@@ -306,7 +306,7 @@ export class AudioVisualiser implements AudioVisualiserAPI {
                 this.elements.status.textContent = 'Disconnected';
                 this.elements.status.style.background = 'rgba(255, 50, 50, 0.15)';
                 this.elements.status.style.color = '#ff3232';
-                
+
                 if (this.options.autoReconnect) {
                     this.scheduleReconnect();
                 }
@@ -381,26 +381,35 @@ export class AudioVisualiser implements AudioVisualiserAPI {
     /**
      * Applies visual effects based on current state
      */
+    /**
+ * Applies visual effects based on current state
+ */
     private applyEffects(frequency: number): void {
         const { currentVignetteSize, currentVignetteBlur, currentIntensity } = this.state;
 
-        // Apply vignette box-shadow effect
+        // Calcular intensidades direccionales
+        const leftIntensity = currentIntensity * 0.7;
+        const bottomIntensity = currentIntensity * 0.6;
+
+        // Apply vignette box-shadow effect with directional emphasis
         const vignetteBoxShadow = `
-            inset 0 0 ${currentVignetteSize}px ${currentVignetteBlur}px rgba(255, 255, 255, ${0.4 + currentIntensity * 0.6}),
-            inset 0 0 ${currentVignetteSize * 0.7}px ${currentVignetteBlur * 0.7}px rgba(147, 51, 234, ${currentIntensity * 0.8}),
-            inset 0 0 ${currentVignetteSize * 0.5}px ${currentVignetteBlur * 0.5}px rgba(59, 130, 246, ${currentIntensity * 0.6})
-        `;
+        inset 0 0 ${currentVignetteSize}px ${currentVignetteBlur}px rgba(255, 255, 255, ${0.4 + currentIntensity * 0.6}),
+        inset 0 0 ${currentVignetteSize * 0.7}px ${currentVignetteBlur * 0.7}px rgba(147, 51, 234, ${currentIntensity * 0.8}),
+        inset 0 0 ${currentVignetteSize * 0.5}px ${currentVignetteBlur * 0.5}px rgba(59, 130, 246, ${currentIntensity * 0.6}),
+        inset ${currentVignetteSize * 0.4}px 0 ${currentVignetteBlur * 1.2}px ${currentVignetteBlur * 0.3}px rgba(147, 51, 234, ${leftIntensity}),
+        inset 0 ${currentVignetteSize * 0.3}px ${currentVignetteBlur * 1.2}px ${currentVignetteBlur * 0.3}px rgba(59, 130, 246, ${bottomIntensity})
+    `;
         this.elements.vignette.style.boxShadow = vignetteBoxShadow;
 
-        // Apply frequency-based color gradient
+        // Apply frequency-based color gradient with directional bias
         const hue = 200 + frequency / 10;
         const glowBackground = `
-            radial-gradient(circle at center,
-                hsla(${hue}, 80%, 60%, ${currentIntensity * 0.3}) 0%,
-                hsla(${hue + 30}, 70%, 50%, ${currentIntensity * 0.15}) 30%,
-                transparent 70%
-            )
-        `;
+        radial-gradient(ellipse 140% 120% at 35% 70%,
+            hsla(${hue}, 80%, 60%, ${currentIntensity * 0.35}) 0%,
+            hsla(${hue + 30}, 70%, 50%, ${currentIntensity * 0.18}) 30%,
+            transparent 70%
+        )
+    `;
         this.elements.glowLayer.style.background = glowBackground;
 
         // Apply pulse ring scaling
@@ -408,6 +417,7 @@ export class AudioVisualiser implements AudioVisualiserAPI {
         this.elements.pulseRing.style.width = `${ringSize}px`;
         this.elements.pulseRing.style.height = `${ringSize}px`;
     }
+
 
     /**
      * Disconnects WebSocket

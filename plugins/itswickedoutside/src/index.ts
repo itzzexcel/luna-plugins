@@ -40,7 +40,7 @@ No me trago tu juego emocional
 No me fío
 */
 
-import { LunaUnload, Tracer } from "@luna/core";
+import { LunaUnload, reduxStore, Tracer } from "@luna/core";
 import { MediaItem, redux } from "@luna/lib";
 import { GetNPView } from "./ui-interface";
 import createAudioVisualiser, { AudioVisualiserAPI } from "./giragira";
@@ -55,118 +55,122 @@ let visualiser: AudioVisualiserAPI | null = null;
  * Initialises or reinitialises the visualiser
  */
 const initVisualiser = (): void => {
-    try {
-        // Clean up previous instance if it exists
-        if (visualiser) {
-            visualiser.disconnect();
-            visualiser.destroy();
-            visualiser = null;
-        }
+	try {
+		// Clean up previous instance if it exists
+		if (visualiser) {
+			visualiser.disconnect();
+			visualiser.destroy();
+			visualiser = null;
+		}
 
-        // Get container element
-        const nowPlaying = GetNPView();
-        
-        // Create new visualiser instance
-        visualiser = createAudioVisualiser(nowPlaying, {
-            lerpFactor: 0.5,
-            wsUrl: 'ws://localhost:5343',
-            autoReconnect: true,
-            maxReconnectAttempts: 100,
-            showStatus: false,
-        });
+		// Get container element
+		const nowPlaying = GetNPView();
 
-    } catch (error) {
-        console.error("Failed to initialize visualiser:", error);
-        visualiser = null;
-    }
+		// Create new visualiser instance
+		visualiser = createAudioVisualiser(nowPlaying, {
+			lerpFactor: 0.5,
+			wsUrl: 'ws://localhost:5343',
+			autoReconnect: true,
+			maxReconnectAttempts: 100,
+			showStatus: false,
+		});
+
+	} catch (error) {
+		console.error("Failed to initialize visualiser:", error);
+		visualiser = null;
+	}
 };
 
 /**
  * Ensures visualiser is connected, reconnects if necessary
  */
 const ensureVisualiserConnected = (): void => {
-    if (!visualiser) {
-        initVisualiser();
-        return;
-    }
+	if (!visualiser) {
+		initVisualiser();
+		return;
+	}
 
-    if (!visualiser.isConnected()) {
-        visualiser.reconnect();
-    }
+	if (!visualiser.isConnected()) {
+		visualiser.reconnect();
+	}
 };
 
 /**
  * Initialises visualiser when DOM is ready
  */
 const initWhenReady = (): void => {
-    if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', initVisualiser);
-    } else {
-        initVisualiser();
-    }
+	if (document.readyState === 'loading') {
+		document.addEventListener('DOMContentLoaded', initVisualiser);
+	} else {
+		initVisualiser();
+	}
 };
 
 // Start initialization
 initWhenReady();
 
-redux.intercept("view/ENTERED_NOWPLAYING", unloads, function() {
-    visualiser?.reconnect();
-    if (visualiser?.isConnected) {
-        console.log("reconnected successfully");
-        
-    }
+redux.intercept("view/ENTERED_NOWPLAYING", unloads, function () {
+	visualiser?.reconnect();
+	if (visualiser?.isConnected) {
+		initVisualiser();
+		console.log("reconnected successfully");
+
+	}
 });
 
-redux.intercept("view/EXITED_NOWPLAYING", unloads, function() {
-    // Stop rendering
-    visualiser?.disconnect();
-    console.log("visualiser disconnected");
-    
+redux.intercept("view/EXITED_NOWPLAYING", unloads, function () {
+	// Stop rendering
+	visualiser?.disconnect();
+	visualiser?.destroy();
+	console.log("visualiser disconnected");
+
 })
+
+
 
 // Cleanup when plugin unloads
 unloads.add(() => {
-    if (visualiser) {
-        try {
-            visualiser.disconnect();
-            visualiser.destroy();
-        } catch (error) {
-            console.error("Error destroying visualiser:", error);
-        } finally {
-            visualiser = null;
-        }
-    }
+	if (visualiser) {
+		try {
+			visualiser.disconnect();
+			visualiser.destroy();
+		} catch (error) {
+			console.error("Error destroying visualiser:", error);
+		} finally {
+			visualiser = null;
+		}
+	}
 });
 
 // Handle media transitions
 MediaItem.onMediaTransition(unloads, async (mediaItem) => {
-    if (!mediaItem) {
-        if (visualiser) {
-            visualiser.disconnect();
-        }
-        return;
-    }
+	if (!mediaItem) {
+		if (visualiser) {
+			visualiser.disconnect();
+		}
+		return;
+	}
 
-    try {
-        // Verify container is available
-        const currentContainer = GetNPView();
-        
-        // Reinitialise if visualiser doesn't exist
-        if (!visualiser) {
-            initVisualiser();
-            return;
-        }
+	try {
+		// Verify container is available
+		const currentContainer = GetNPView();
 
-        // Ensure connection is active
-        ensureVisualiserConnected();
+		// Reinitialise if visualiser doesn't exist
+		if (!visualiser) {
+			initVisualiser();
+			return;
+		}
 
-        // Adjust settings for new track
-        visualiser.setLerpFactor(0.5);
+		// Ensure connection is active
+		ensureVisualiserConnected();
 
-    } catch (error) {
-        console.error("Error in media transition:", error);
-        initVisualiser();
-    }
+		// Adjust settings for new track
+		visualiser.setLerpFactor(0.5);
+
+	} catch (error) {
+		console.error("Error in media transition:", error);
+		initVisualiser();
+	}
 });
 
 // Export utility functions
