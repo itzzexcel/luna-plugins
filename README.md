@@ -1,6 +1,20 @@
 # Luna Plugins
 
-This is a template & example of how to develop **[Tidal Luna](https://github.com/Inrixia/TidaLuna)** plugins.
+This repo contains example Luna plugins and a template for building new ones.
+
+## Plugins in this repository
+
+- **Reactivo** — a lightweight Now Playing audio visualiser that overlays reactive glow, vignette and pulse effects. See [plugins/itswickedoutside/README.md](plugins/itswickedoutside/README.md) for full details.
+
+### Reactivo (quick install)
+
+Reactivo ships with a small helper executable bundled for Windows inside the plugin source at `plugins/itswickedoutside/src/net9.0-windows.zip`.
+
+1. Unzip `plugins/itswickedoutside/src/net9.0-windows.zip`.
+2. Run the contained .exe and install it into any folder you like (it does not need a special path).
+3. Run it once — after the first run it should be available to the plugin; you can safely forget about it.
+
+Note: The visualiser will try to connect to a WebSocket analysis server (default `ws://localhost:5343`) to receive audio analysis frames. The full audio analyser project (source + platform builds) is maintained separately at https://github.com/itzzexcel/reactivo. The plugin repository includes a small bundled Windows helper executable for convenience: see `plugins/itswickedoutside/src/net9.0-windows.zip`.
 
 ## Getting Started
 

@@ -54,6 +54,8 @@ The internal visualiser supports the following options (defaults shown):
 
 To change options, edit the code that instantiates the visualiser in [src/index.ts](src/index.ts).
 
+The audio analysis server used by Reactivo is maintained in a separate project: https://github.com/itzzexcel/reactivo. If you want the analysis server source, example agents, or platform builds, check that repo.
+
 ## Development
 
 Files to note:
@@ -63,6 +65,9 @@ Files to note:
 - [src/ui-interface.ts](src/ui-interface.ts) — helper to locate the Now Playing container
 
 If you develop locally in this monorepo, use the top-level watch/build scripts (see repository README) to rebuild the plugin and test changes in the Luna app.
+
+### Bundled helper (Windows)
+This plugin includes a small helper executable bundled for Windows at `src/net9.0-windows.zip`. You can unzip and run the contained installer to install a local analysis helper — the binary is provided to simplify testing on Windows, but the full analyser source and other platform builds are in the external repo above.
 
 ## Troubleshooting
 
