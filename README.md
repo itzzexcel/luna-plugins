@@ -1,7 +1,4 @@
 # Luna Plugins
-
-This repo contains example Luna plugins and a template for building new ones.
-
 ## Plugins in this repository
 
 - **Reactivo** — a lightweight Now Playing audio visualiser that overlays reactive glow, vignette and pulse effects. See [plugins/itswickedoutside/README.md](plugins/itswickedoutside/README.md) for full details.
