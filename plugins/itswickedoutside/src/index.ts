@@ -106,7 +106,7 @@ const initWhenReady = (): void => {
 	}
 };
 
-// Start initialization
+// Start initialisation
 initWhenReady();
 
 redux.intercept("view/ENTERED_NOWPLAYING", unloads, function () {
@@ -126,9 +126,6 @@ redux.intercept("view/EXITED_NOWPLAYING", unloads, function () {
 
 })
 
-
-
-// Cleanup when plugin unloads
 unloads.add(() => {
 	if (visualiser) {
 		try {
@@ -142,7 +139,6 @@ unloads.add(() => {
 	}
 });
 
-// Handle media transitions
 MediaItem.onMediaTransition(unloads, async (mediaItem) => {
 	if (!mediaItem) {
 		if (visualiser) {
@@ -152,10 +148,8 @@ MediaItem.onMediaTransition(unloads, async (mediaItem) => {
 	}
 
 	try {
-		// Verify container is available
 		const currentContainer = GetNPView();
 
-		// Reinitialise if visualiser doesn't exist
 		if (!visualiser) {
 			initVisualiser();
 			return;
@@ -164,7 +158,6 @@ MediaItem.onMediaTransition(unloads, async (mediaItem) => {
 		// Ensure connection is active
 		ensureVisualiserConnected();
 
-		// Adjust settings for new track
 		visualiser.setLerpFactor(0.5);
 
 	} catch (error) {
@@ -173,5 +166,4 @@ MediaItem.onMediaTransition(unloads, async (mediaItem) => {
 	}
 });
 
-// Export utility functions
 export { initVisualiser, ensureVisualiserConnected };

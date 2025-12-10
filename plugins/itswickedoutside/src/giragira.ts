@@ -378,16 +378,12 @@ export class AudioVisualiser implements AudioVisualiserAPI {
         this.applyEffects(strongestBass.frequency);
     }
 
-    /**
-     * Applies visual effects based on current state
-     */
-    /**
+ /**
  * Applies visual effects based on current state
  */
     private applyEffects(frequency: number): void {
         const { currentVignetteSize, currentVignetteBlur, currentIntensity } = this.state;
 
-        // Calcular intensidades direccionales
         const leftIntensity = currentIntensity * 0.7;
         const bottomIntensity = currentIntensity * 0.6;
 
@@ -419,9 +415,6 @@ export class AudioVisualiser implements AudioVisualiserAPI {
     }
 
 
-    /**
-     * Disconnects WebSocket
-     */
     public disconnect(): void {
         if (this.reconnectTimeout) {
             clearTimeout(this.reconnectTimeout);
@@ -433,48 +426,30 @@ export class AudioVisualiser implements AudioVisualiserAPI {
         }
     }
 
-    /**
-     * Reconnects WebSocket
-     */
     public reconnect(): void {
         this.disconnect();
         this.reconnectAttempts = 0;
         this.connect();
     }
 
-    /**
-     * Checks if WebSocket is connected
-     */
     public isConnected(): boolean {
         return this.ws?.readyState === WebSocket.OPEN;
     }
 
-    /**
-     * Sets the lerp factor for transition smoothness
-     */
     public setLerpFactor(factor: number): void {
         this.options.lerpFactor = Math.max(0, Math.min(1, factor));
     }
 
-    /**
-     * Toggles stats visibility
-     */
     public toggleStats(visible: boolean): void {
         this.options.showStats = visible;
         this.elements.stats.style.display = visible ? 'flex' : 'none';
     }
 
-    /**
-     * Toggles status indicator visibility
-     */
     public toggleStatus(visible: boolean): void {
         this.options.showStatus = visible;
         this.elements.status.style.display = visible ? 'block' : 'none';
     }
 
-    /**
-     * Destroys the visualiser and cleans up resources
-     */
     public destroy(): void {
         this.disconnect();
         if (this.overlayWrapper?.parentNode) {
@@ -483,9 +458,6 @@ export class AudioVisualiser implements AudioVisualiserAPI {
     }
 }
 
-/**
- * Factory function to create a new audio visualiser instance
- */
 export function createAudioVisualiser(
     container: string | HTMLElement,
     options?: AudioVisualiserOptions
