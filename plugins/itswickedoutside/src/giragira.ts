@@ -378,9 +378,9 @@ export class AudioVisualiser implements AudioVisualiserAPI {
         this.applyEffects(strongestBass.frequency);
     }
 
- /**
- * Applies visual effects based on current state
- */
+    /**
+    * Applies visual effects based on current state
+    */
     private applyEffects(frequency: number): void {
         const { currentVignetteSize, currentVignetteBlur, currentIntensity } = this.state;
 
