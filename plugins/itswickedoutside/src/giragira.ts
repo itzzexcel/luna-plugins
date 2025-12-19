@@ -2,6 +2,8 @@
  * Audio Visualiser Module
  */
 
+import { currentDevice } from ".";
+
 export interface AudioAnalysis {
     bass?: {
         strongest: {
@@ -25,6 +27,7 @@ export interface AudioVisualiserOptions {
     showStats?: boolean;
     showStatus?: boolean;
     zIndex?: number;
+    isNowPlayingVisible?: boolean;
 }
 
 export interface AudioVisualiserAPI {
@@ -33,14 +36,14 @@ export interface AudioVisualiserAPI {
     disconnect: () => void;
     isConnected: () => boolean;
     setLerpFactor: (factor: number) => void;
-    toggleStats: (visible: boolean) => void;
-    toggleStatus: (visible: boolean) => void;
+    togglePause: (pause: boolean) => void;
+    deviceChanged: (deviceId: string) => void;
 }
 
 export class AudioVisualiser implements AudioVisualiserAPI {
     private overlayWrapper: HTMLElement;
     private container: HTMLElement;
-    private ws: WebSocket | null = null;
+    public ws: WebSocket | null = null;
     private reconnectTimeout: number | null = null;
     private reconnectAttempts = 0;
 
@@ -48,11 +51,6 @@ export class AudioVisualiser implements AudioVisualiserAPI {
         vignette: HTMLElement;
         glowLayer: HTMLElement;
         pulseRing: HTMLElement;
-        status: HTMLElement;
-        stats: HTMLElement;
-        bassValue: HTMLElement;
-        freqValue: HTMLElement;
-        bpmValue: HTMLElement;
     };
 
     private state = {
@@ -78,7 +76,8 @@ export class AudioVisualiser implements AudioVisualiserAPI {
             lerpFactor: 0.5,
             showStats: false,
             showStatus: false,
-            zIndex: -3,
+            zIndex: 1,
+            isNowPlayingVisible: false,
             ...options,
         };
 
@@ -189,7 +188,7 @@ export class AudioVisualiser implements AudioVisualiserAPI {
             color: #ff3232 !important;
             border: 1px solid rgba(255, 50, 50, 0.3) !important;
             display: ${this.options.showStatus ? 'block' : 'none'} !important;
-            z-index: -3 !important;
+            z-index: ${this.options.zIndex} !important;
         `;
 
         const stats = document.createElement('div');
@@ -200,7 +199,7 @@ export class AudioVisualiser implements AudioVisualiserAPI {
             transform: translateX(-50%) !important;
             display: ${this.options.showStats ? 'flex' : 'none'} !important;
             gap: 20px !important;
-            z-index: -3 !important;
+            z-index: ${this.options.zIndex} !important;
             pointer-events: all !important;
         `;
 
@@ -280,11 +279,7 @@ export class AudioVisualiser implements AudioVisualiserAPI {
             this.ws = new WebSocket(this.options.wsUrl);
 
             this.ws.onopen = () => {
-                this.reconnectAttempts = 0;
-                this.elements.status.textContent = 'Connected';
-                this.elements.status.style.background = 'rgba(0, 255, 100, 0.15)';
-                this.elements.status.style.color = '#00ff64';
-                this.elements.status.style.borderColor = 'rgba(0, 255, 100, 0.3)';
+                this.ws?.send(currentDevice);
             };
 
             this.ws.onmessage = (event: MessageEvent) => {
@@ -292,6 +287,8 @@ export class AudioVisualiser implements AudioVisualiserAPI {
                     const data: AudioAnalysis[] = JSON.parse(event.data);
                     if (Array.isArray(data) && data.length > 0) {
                         this.update(data[0]);
+                    } else {
+                        console.log("Invalid data format:", data);
                     }
                 } catch (error) {
                     // Silently handle parsing errors
@@ -303,9 +300,12 @@ export class AudioVisualiser implements AudioVisualiserAPI {
             };
 
             this.ws.onclose = () => {
-                this.elements.status.textContent = 'Disconnected';
-                this.elements.status.style.background = 'rgba(255, 50, 50, 0.15)';
-                this.elements.status.style.color = '#ff3232';
+                // If explicitly disconnected, don't reconnect
+                if (!this.ws) return;
+
+                // this.elements.status.textContent = 'Disconnected';
+                // this.elements.status.style.background = 'rgba(255, 50, 50, 0.15)';
+                // this.elements.status.style.color = '#ff3232';
 
                 if (this.options.autoReconnect) {
                     this.scheduleReconnect();
@@ -316,6 +316,11 @@ export class AudioVisualiser implements AudioVisualiserAPI {
         }
     }
 
+    public deviceChanged(deviceId: string): void {
+        if (this.ws) {
+            this.ws?.send(deviceId);
+        }
+    }
 
     private scheduleReconnect(): void {
         if (this.reconnectAttempts >= this.options.maxReconnectAttempts) {
@@ -330,18 +335,20 @@ export class AudioVisualiser implements AudioVisualiserAPI {
         }, delay);
     }
 
+    public togglePause(pause: boolean): void {
+        this.options.isNowPlayingVisible = pause;
+    }
+
     /**
      * Visualiser update
      */
     private update(analysis: AudioAnalysis): void {
+        if (!this.options.isNowPlayingVisible) {
+            return;
+        }
+
         const strongestBass = analysis.bass?.strongest;
         const bassAverage = analysis.bass?.average || 0;
-        const currentBpm = analysis.bpm || 0;
-
-        // Update stats display
-        this.elements.bassValue.textContent = (bassAverage * 1000000).toFixed(1);
-        this.elements.freqValue.textContent = strongestBass ? `${Math.round(strongestBass.frequency)} Hz` : '0 Hz';
-        this.elements.bpmValue.textContent = Math.round(currentBpm).toString();
 
         if (!strongestBass) {
             return;
@@ -438,16 +445,6 @@ export class AudioVisualiser implements AudioVisualiserAPI {
 
     public setLerpFactor(factor: number): void {
         this.options.lerpFactor = Math.max(0, Math.min(1, factor));
-    }
-
-    public toggleStats(visible: boolean): void {
-        this.options.showStats = visible;
-        this.elements.stats.style.display = visible ? 'flex' : 'none';
-    }
-
-    public toggleStatus(visible: boolean): void {
-        this.options.showStatus = visible;
-        this.elements.status.style.display = visible ? 'block' : 'none';
     }
 
     public destroy(): void {

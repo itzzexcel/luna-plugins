@@ -40,7 +40,7 @@ No me trago tu juego emocional
 No me fío
 */
 
-import { LunaUnload, reduxStore, Tracer } from "@luna/core";
+import { LunaUnload, Tracer } from "@luna/core";
 import { MediaItem, redux } from "@luna/lib";
 import { GetNPView } from "./ui-interface";
 import createAudioVisualiser, { AudioVisualiserAPI } from "./giragira";
@@ -50,6 +50,8 @@ export const unloads = new Set<LunaUnload>();
 
 // Visualiser instance (initially null)
 let visualiser: AudioVisualiserAPI | null = null;
+export let availableDevices: object | null = null;
+export let currentDevice : string = "";
 
 /**
  * Initialises or reinitialises the visualiser
@@ -73,6 +75,7 @@ const initVisualiser = (): void => {
 			autoReconnect: true,
 			maxReconnectAttempts: 100,
 			showStatus: false,
+			showStats: false,	
 		});
 
 	} catch (error) {
@@ -110,21 +113,47 @@ const initWhenReady = (): void => {
 initWhenReady();
 
 redux.intercept("view/ENTERED_NOWPLAYING", unloads, function () {
-	visualiser?.reconnect();
-	if (visualiser?.isConnected) {
+	visualiser?.togglePause(true);
+	if (!visualiser) {
 		initVisualiser();
-		console.log("reconnected successfully");
-
+	} else {
+		visualiser.reconnect();
+		if (visualiser.isConnected()) {
+			console.log("reconnected successfully");
+		}
 	}
 });
 
 redux.intercept("view/EXITED_NOWPLAYING", unloads, function () {
-	// Stop rendering
+	visualiser?.togglePause(false);	
 	visualiser?.disconnect();
-	visualiser?.destroy();
 	console.log("visualiser disconnected");
 
-})
+});
+
+redux.intercept("player/SET_ACTIVE_DEVICE_SUCCESS", unloads, function (x: any) {
+	
+	if (Array.isArray(availableDevices) && availableDevices.length === 0) {
+		console.log("No available devices, forcing the redux to set again the thingaling bleh");
+		currentDevice = redux.store["player/SET_AVAILABLE_DEVICES"]([]);
+	}
+	
+	if (Array.isArray(availableDevices)) {
+		let deviceObject = availableDevices.find((d: any) => d.id === x);
+    if (deviceObject) {
+        console.log("Native Device ID:", deviceObject.nativeDeviceId);
+		currentDevice = deviceObject.nativeDeviceId;
+		if (visualiser) {
+			visualiser.deviceChanged(deviceObject.nativeDeviceId);
+		}
+	}}
+});
+
+
+redux.intercept("player/SET_AVAILABLE_DEVICES", unloads, function (x: any) {
+	availableDevices = x;
+	console.log("Devices updated:", availableDevices);
+});
 
 unloads.add(() => {
 	if (visualiser) {
@@ -148,14 +177,11 @@ MediaItem.onMediaTransition(unloads, async (mediaItem) => {
 	}
 
 	try {
-		const currentContainer = GetNPView();
-
 		if (!visualiser) {
 			initVisualiser();
 			return;
 		}
 
-		// Ensure connection is active
 		ensureVisualiserConnected();
 
 		visualiser.setLerpFactor(0.5);
