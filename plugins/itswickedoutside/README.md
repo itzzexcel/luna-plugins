@@ -10,21 +10,47 @@
 
 ## Installation
 
-Install the plugin through your Luna plugin workflow (or drop the built files into your plugins directory). If developing locally inside this monorepo you can run the repo build/watch commands — otherwise install from releases if published.
+
+- Download the executable file and store it in a place you can forget or it doesn't bother you.
+https://github.com/itzzexcel/luna-plugins/raw/refs/heads/master/plugins/itswickedoutside/src/net9.0-windows.zip
+What it will do, is that it will auto register as a start-up application.
+- Installation ↪️ QUESTIONS ABOUT IT: DM ME via Discord // @itzzexcel 
+- Requirements: 
+  - .NET Runtime 9.0
+    - https://dotnet.microsoft.com/es-es/download/dotnet/thank-you/runtime-9.0.11-windows-x64-installer for x64 Windows.
+- Yes it does waste much RAM
+
+- Install my store.json file to TIDAL:
+https://github.com/itzzexcel/luna-plugins/releases/download/latest/store.json
+Enable the reactivo  plugin listed in TidaLuna settings
 
 Make sure the plugin can reach an analysis WebSocket at the configured URL (default: `ws://localhost:5343`). The visualiser expects messages as JSON arrays where the first item is an object matching the shape:
 
 ```json
-[{
-  "bass": {
-    "strongest": { "frequency": 42, "magnitude": 0.85 },
-    "average": 0.00012,
-    "max": 0.0004,
-    "frequency": 42
-  },
-  "bpm": 128,
-  "utime": 1234567890
-}]
+[
+  {
+    "utime": 639020764300711759,
+    "analysis": 75,
+    "energy": 0.35578167,
+    "bass": {
+      "average": 3.6769704E-06,
+      "max": 9.066105E-06,
+      "strongest": {
+        "frequency": 117.1875,
+        "magnitude": 1.0377037E-05
+      }
+    },
+    "treble": {
+      "average": 2.7877405E-07,
+      "max": 1.0435621E-06,
+      "strongest": {
+        "frequency": 4054.6875,
+        "magnitude": 4.205432E-06
+      }
+    },
+    "bpm": 0
+  }
+]
 ```
 
 ## Usage
@@ -40,7 +66,7 @@ Controls and behaviors:
 
 This plugin exposes an example settings UI. You can view or extend the settings in [src/Settings.tsx](src/Settings.tsx).
 
-### Runtime options
+### Dev options
 The internal visualiser supports the following options (defaults shown):
 
 - `wsUrl` (string) — default `ws://localhost:5343`
