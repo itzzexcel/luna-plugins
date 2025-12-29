@@ -76,7 +76,7 @@ export class AudioVisualiser implements AudioVisualiserAPI {
             lerpFactor: 0.5,
             showStats: false,
             showStatus: false,
-            zIndex: 1,
+            zIndex: -1,
             isNowPlayingVisible: false,
             ...options,
         };

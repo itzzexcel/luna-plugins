@@ -82,6 +82,9 @@ const initVisualiser = (): void => {
 		console.error("Failed to initialize visualiser:", error);
 		visualiser = null;
 	}
+
+	// TODO: Get the current playing device and search it in the bozo zozo levle awwrrayy 
+	
 };
 
 /**
