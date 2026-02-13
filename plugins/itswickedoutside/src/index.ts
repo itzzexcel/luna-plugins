@@ -70,7 +70,7 @@ const initVisualiser = (): void => {
 
 		// Create new visualiser instance
 		visualiser = createAudioVisualiser(nowPlaying, {
-			lerpFactor: 0.5,
+			lerpFactor: 0.2,
 			wsUrl: 'ws://localhost:5343',
 			autoReconnect: true,
 			maxReconnectAttempts: 100,
@@ -186,8 +186,6 @@ MediaItem.onMediaTransition(unloads, async (mediaItem) => {
 		}
 
 		ensureVisualiserConnected();
-
-		visualiser.setLerpFactor(0.5);
 
 	} catch (error) {
 		console.error("Error in media transition:", error);

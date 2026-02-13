@@ -40,6 +40,94 @@ export interface AudioVisualiserAPI {
     deviceChanged: (deviceId: string) => void;
 }
 
+class DynamicLerpController {
+    private currentLerp: number = 0.5;
+    private targetLerp: number = 0.5;
+    private lerpTransitionSpeed: number = 0.05;
+    
+    private config = {
+        bpmMin: 60,
+        bpmMax: 180,
+        lerpMin: 0.3,
+        lerpMax: 0.8,
+        curve: 'exponential' as 'linear' | 'exponential' | 'logarithmic'
+    };
+    
+    constructor(config?: Partial<typeof this.config>) {
+        if (config) {
+            this.config = { ...this.config, ...config };
+        }
+    }
+    calculateBPMLerp(bpm: number): number {
+        const { bpmMin, bpmMax, lerpMin, lerpMax, curve } = this.config;
+        
+        const normalizedBPM = Math.min(Math.max((bpm - bpmMin) / (bpmMax - bpmMin), 0), 1);
+        
+        let curveFactor: number;
+        switch (curve) {
+            case 'exponential':
+                curveFactor = Math.pow(normalizedBPM, 1.5);
+                break;
+            case 'logarithmic':
+                curveFactor = Math.log1p(normalizedBPM * 9) / Math.log(10);
+                break;
+            case 'linear':
+            default:
+                curveFactor = normalizedBPM;
+        }
+        
+        return lerpMin + (lerpMax - lerpMin) * curveFactor;
+    }
+    
+    calculateEnergyLerp(energy: number): number {
+        return this.config.lerpMin + (this.config.lerpMax - this.config.lerpMin) * energy;
+    }
+    
+    calculateCombinedLerp(factors: {
+        bpm?: number;
+        energy?: number;
+        loudness?: number;
+        tempo?: number;
+    }, weights: {
+        bpm?: number;
+        energy?: number;
+        loudness?: number;
+        tempo?: number;
+    } = { bpm: 0.6, energy: 0.4 }): number {
+        let totalWeight = 0;
+        let weightedSum = 0;
+        
+        if (factors.bpm !== undefined && weights.bpm) {
+            weightedSum += this.calculateBPMLerp(factors.bpm) * weights.bpm;
+            totalWeight += weights.bpm;
+        }
+        
+        if (factors.energy !== undefined && weights.energy) {
+            weightedSum += this.calculateEnergyLerp(factors.energy) * weights.energy;
+            totalWeight += weights.energy;
+        }
+        
+        
+        return totalWeight > 0 ? weightedSum / totalWeight : this.config.lerpMin;
+    }
+    
+    update(targetLerp: number, deltaTime: number = 1/60): number {
+        this.targetLerp = targetLerp;
+        
+        this.currentLerp += (this.targetLerp - this.currentLerp) * this.lerpTransitionSpeed;
+        
+        return this.currentLerp;
+    }
+    
+    setTransitionSpeed(speed: number) {
+        this.lerpTransitionSpeed = Math.min(Math.max(speed, 0.01), 1);
+    }
+    
+    getCurrentLerp(): number {
+        return this.currentLerp;
+    }
+}
+
 export class AudioVisualiser implements AudioVisualiserAPI {
     private overlayWrapper: HTMLElement;
     private container: HTMLElement;
@@ -63,11 +151,14 @@ export class AudioVisualiser implements AudioVisualiserAPI {
     };
 
     private options: Required<AudioVisualiserOptions>;
-
+    private lerpController: DynamicLerpController;
+    
     constructor(
         containerSelector: string | HTMLElement,
         options: AudioVisualiserOptions = {}
     ) {
+
+        
         this.options = {
             wsUrl: 'ws://localhost:5343',
             autoReconnect: true,
@@ -80,6 +171,16 @@ export class AudioVisualiser implements AudioVisualiserAPI {
             isNowPlayingVisible: false,
             ...options,
         };
+
+        this.lerpController = new DynamicLerpController({
+            bpmMin: 80,      // BPM mínimo esperado
+            bpmMax: 180,     // BPM máximo esperado
+            lerpMin: 0.3,    // Lerp mínimo
+            lerpMax: 0.8,    // Lerp máximo
+            curve: 'exponential' // Tipo de curva
+        });
+        
+        this.lerpController.setTransitionSpeed(0.1); // Suavidad de transiciones
 
         this.container = this.resolveContainer(containerSelector);
         this.ensureContainerPosition();
@@ -283,17 +384,22 @@ export class AudioVisualiser implements AudioVisualiserAPI {
             };
 
             this.ws.onmessage = (event: MessageEvent) => {
-                try {
-                    const data: AudioAnalysis[] = JSON.parse(event.data);
-                    if (Array.isArray(data) && data.length > 0) {
-                        this.update(data[0]);
-                    } else {
-                        console.log("Invalid data format:", data);
+            try {
+                const data: AudioAnalysis[] = JSON.parse(event.data);
+                if (Array.isArray(data) && data.length > 0) {
+                    const analysis = data[0];
+                    this.update(analysis);
+                    
+                    if (analysis.bpm) {
+                        const targetLerp = this.lerpController.calculateBPMLerp(analysis.bpm);
+                        const smoothLerp = this.lerpController.update(targetLerp);
+                        this.setLerpFactor(smoothLerp);
                     }
-                } catch (error) {
-                    // Silently handle parsing errors
                 }
-            };
+            } catch (error) {
+                console.warn("Error parsing audio analysis:", error);
+            }
+        };
 
             this.ws.onerror = () => {
                 // Connection error occurred
@@ -364,22 +470,27 @@ export class AudioVisualiser implements AudioVisualiserAPI {
         this.state.targetVignetteBlur = 10 + totalIntensity * 200;
         this.state.targetIntensity = totalIntensity;
 
-        // Apply smooth interpolation
         const { lerpFactor } = this.options;
+        const attackFactor = lerpFactor;
+        const decayFactor = lerpFactor * 0.15;
+
+        const getFactor = (current: number, target: number) => 
+            target > current ? attackFactor : decayFactor;
+
         this.state.currentVignetteSize = this.lerp(
             this.state.currentVignetteSize,
             this.state.targetVignetteSize,
-            lerpFactor
+            getFactor(this.state.currentVignetteSize, this.state.targetVignetteSize)
         );
         this.state.currentVignetteBlur = this.lerp(
             this.state.currentVignetteBlur,
             this.state.targetVignetteBlur,
-            lerpFactor
+            getFactor(this.state.currentVignetteBlur, this.state.targetVignetteBlur)
         );
         this.state.currentIntensity = this.lerp(
             this.state.currentIntensity,
             this.state.targetIntensity,
-            lerpFactor
+            getFactor(this.state.currentIntensity, this.state.targetIntensity)
         );
 
         this.applyEffects(strongestBass.frequency);
