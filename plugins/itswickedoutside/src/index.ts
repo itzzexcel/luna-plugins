@@ -50,7 +50,7 @@ export const unloads = new Set<LunaUnload>();
 
 // Visualiser instance (initially null)
 let visualiser: AudioVisualiserAPI | null = null;
-export let availableDevices: object | null = null;
+export let availableDevices: any[] = [];
 export let currentDevice : string = "";
 
 /**

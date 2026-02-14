@@ -152,6 +152,8 @@ export class AudioVisualiser implements AudioVisualiserAPI {
 
     private options: Required<AudioVisualiserOptions>;
     private lerpController: DynamicLerpController;
+    private lastUpdateTime: number = 0;
+    private updateIntervalMs: number = 33;
     
     constructor(
         containerSelector: string | HTMLElement,
@@ -384,22 +386,27 @@ export class AudioVisualiser implements AudioVisualiserAPI {
             };
 
             this.ws.onmessage = (event: MessageEvent) => {
-            try {
-                const data: AudioAnalysis[] = JSON.parse(event.data);
-                if (Array.isArray(data) && data.length > 0) {
-                    const analysis = data[0];
-                    this.update(analysis);
-                    
-                    if (analysis.bpm) {
-                        const targetLerp = this.lerpController.calculateBPMLerp(analysis.bpm);
-                        const smoothLerp = this.lerpController.update(targetLerp);
-                        this.setLerpFactor(smoothLerp);
-                    }
+                const now = performance.now();
+                if (now - this.lastUpdateTime < this.updateIntervalMs) {
+                    return;
                 }
-            } catch (error) {
-                console.warn("Error parsing audio analysis:", error);
-            }
-        };
+                this.lastUpdateTime = now;
+                try {
+                    const data: AudioAnalysis[] = JSON.parse(event.data);
+                    if (Array.isArray(data) && data.length > 0) {
+                        const analysis = data[0];
+                        this.update(analysis);
+                        
+                        if (analysis.bpm) {
+                            const targetLerp = this.lerpController.calculateBPMLerp(analysis.bpm);
+                            const smoothLerp = this.lerpController.update(targetLerp);
+                            this.setLerpFactor(smoothLerp);
+                        }
+                    }
+                } catch (error) {
+                    console.warn("Error parsing audio analysis:", error);
+                }
+            };
 
             this.ws.onerror = () => {
                 // Connection error occurred
@@ -539,6 +546,10 @@ export class AudioVisualiser implements AudioVisualiserAPI {
             this.reconnectTimeout = null;
         }
         if (this.ws) {
+            this.ws.onopen = null;
+            this.ws.onmessage = null;
+            this.ws.onclose = null;
+            this.ws.onerror = null;
             this.ws.close(1000, 'Client disconnect');
             this.ws = null;
         }
