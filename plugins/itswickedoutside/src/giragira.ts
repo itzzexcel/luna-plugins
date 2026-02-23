@@ -28,6 +28,8 @@ export interface AudioVisualiserOptions {
     showStatus?: boolean;
     zIndex?: number;
     isNowPlayingVisible?: boolean;
+    intensityMultiplier?: number;
+    useDynamicLerp?: boolean;
 }
 
 export interface AudioVisualiserAPI {
@@ -38,6 +40,8 @@ export interface AudioVisualiserAPI {
     setLerpFactor: (factor: number) => void;
     togglePause: (pause: boolean) => void;
     deviceChanged: (deviceId: string) => void;
+    setIntensityMultiplier?: (mult: number) => void;
+    setDynamicLerpEnabled?: (enabled: boolean) => void;
 }
 
 class DynamicLerpController {
@@ -170,19 +174,21 @@ export class AudioVisualiser implements AudioVisualiserAPI {
             showStats: false,
             showStatus: false,
             zIndex: -1,
+            intensityMultiplier: 1,
+            useDynamicLerp: true,
             isNowPlayingVisible: false,
             ...options,
         };
 
         this.lerpController = new DynamicLerpController({
-            bpmMin: 80,      // BPM mínimo esperado
-            bpmMax: 180,     // BPM máximo esperado
-            lerpMin: 0.3,    // Lerp mínimo
-            lerpMax: 0.8,    // Lerp máximo
-            curve: 'exponential' // Tipo de curva
+            bpmMin: 80,      // Min BPM expected
+            bpmMax: 180,     // Max BPM expected
+            lerpMin: 0.3,    // Minimum lerp factor
+            lerpMax: 0.8,    // Maximum lerp factor
+            curve: 'exponential' // Curve type
         });
         
-        this.lerpController.setTransitionSpeed(0.1); // Suavidad de transiciones
+        this.lerpController.setTransitionSpeed(0.1); // Transition smoothness
 
         this.container = this.resolveContainer(containerSelector);
         this.ensureContainerPosition();
@@ -396,8 +402,7 @@ export class AudioVisualiser implements AudioVisualiserAPI {
                     if (Array.isArray(data) && data.length > 0) {
                         const analysis = data[0];
                         this.update(analysis);
-                        
-                        if (analysis.bpm) {
+                        if (analysis.bpm && this.options.useDynamicLerp) {
                             const targetLerp = this.lerpController.calculateBPMLerp(analysis.bpm);
                             const smoothLerp = this.lerpController.update(targetLerp);
                             this.setLerpFactor(smoothLerp);
@@ -470,9 +475,10 @@ export class AudioVisualiser implements AudioVisualiserAPI {
         // Calculate intensity based on frequency and magnitude
         const lowFreqIntensity = Math.max(0, 1 - (strongestBass.frequency - 20) / 200);
         const magnitudeIntensity = Math.min(bassAverage * 10000, 1);
-        const totalIntensity = lowFreqIntensity * magnitudeIntensity;
+        const baseIntensity = lowFreqIntensity * magnitudeIntensity;
+        const totalIntensity = baseIntensity * (this.options.intensityMultiplier ?? 1);
 
-        // Update target values
+        // Update
         this.state.targetVignetteSize = 100 + totalIntensity * 300;
         this.state.targetVignetteBlur = 10 + totalIntensity * 200;
         this.state.targetIntensity = totalIntensity;
@@ -567,6 +573,14 @@ export class AudioVisualiser implements AudioVisualiserAPI {
 
     public setLerpFactor(factor: number): void {
         this.options.lerpFactor = Math.max(0, Math.min(1, factor));
+    }
+
+    public setIntensityMultiplier(mult: number): void {
+        this.options.intensityMultiplier = Math.max(0, mult);
+    }
+
+    public setDynamicLerpEnabled(enabled: boolean): void {
+        this.options.useDynamicLerp = !!enabled;
     }
 
     public destroy(): void {

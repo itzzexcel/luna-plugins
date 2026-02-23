@@ -43,15 +43,21 @@ No me fío
 import { LunaUnload, Tracer } from "@luna/core";
 import { MediaItem, redux } from "@luna/lib";
 import { GetNPView } from "./ui-interface";
+
+
 import createAudioVisualiser, { AudioVisualiserAPI } from "./giragira";
 
+export { Settings } from "./Settings";
 export const { trace, errSignal } = Tracer("[reactivo]");
 export const unloads = new Set<LunaUnload>();
 
-// Visualiser instance (initially null)
+// Instances (initially null)
 let visualiser: AudioVisualiserAPI | null = null;
 export let availableDevices: any[] = [];
-export let currentDevice : string = "";
+export let currentDevice: string = "";
+
+export let vignetteIntensity: number = 1;
+export let dynamicLerpEnabled: boolean = true;
 
 /**
  * Initialises or reinitialises the visualiser
@@ -75,16 +81,15 @@ const initVisualiser = (): void => {
 			autoReconnect: true,
 			maxReconnectAttempts: 100,
 			showStatus: false,
-			showStats: false,	
+			showStats: false,
+			intensityMultiplier: vignetteIntensity,
+			useDynamicLerp: dynamicLerpEnabled,
 		});
 
 	} catch (error) {
 		console.error("Failed to initialize visualiser:", error);
 		visualiser = null;
 	}
-
-	// TODO: Get the current playing device and search it in the bozo zozo levle awwrrayy 
-	
 };
 
 /**
@@ -122,40 +127,40 @@ redux.intercept("view/ENTERED_NOWPLAYING", unloads, function () {
 	} else {
 		visualiser.reconnect();
 		if (visualiser.isConnected()) {
-			console.log("reconnected successfully");
+			console.log("[reactivo] reconnected successfully");
 		}
 	}
 });
 
 redux.intercept("view/EXITED_NOWPLAYING", unloads, function () {
-	visualiser?.togglePause(false);	
+	visualiser?.togglePause(false);
 	visualiser?.disconnect();
-	console.log("visualiser disconnected");
 
 });
 
 redux.intercept("player/SET_ACTIVE_DEVICE_SUCCESS", unloads, function (x: any) {
-	
+
 	if (Array.isArray(availableDevices) && availableDevices.length === 0) {
-		console.log("No available devices, forcing the redux to set again the thingaling bleh");
+		console.log("[reactivo] No available devices, forcing the redux to set again the thingaling bleh");
 		currentDevice = redux.store["player/SET_AVAILABLE_DEVICES"]([]);
 	}
-	
+
 	if (Array.isArray(availableDevices)) {
 		let deviceObject = availableDevices.find((d: any) => d.id === x);
-    if (deviceObject) {
-        console.log("Native Device ID:", deviceObject.nativeDeviceId);
-		currentDevice = deviceObject.nativeDeviceId;
-		if (visualiser) {
-			visualiser.deviceChanged(deviceObject.nativeDeviceId);
+		if (deviceObject) {
+			console.log("[reactivo] Native Device ID:", deviceObject.nativeDeviceId);
+			currentDevice = deviceObject.nativeDeviceId;
+			if (visualiser) {
+				visualiser.deviceChanged(deviceObject.nativeDeviceId);
+			}
 		}
-	}}
+	}
 });
 
 
 redux.intercept("player/SET_AVAILABLE_DEVICES", unloads, function (x: any) {
 	availableDevices = x;
-	console.log("Devices updated:", availableDevices);
+	console.log("[reactivo] Devices updated:", availableDevices);
 });
 
 unloads.add(() => {
@@ -192,5 +197,20 @@ MediaItem.onMediaTransition(unloads, async (mediaItem) => {
 		initVisualiser();
 	}
 });
+
+// UI / settings hooks
+export function setVignetteIntensity(value: number) {
+	vignetteIntensity = value;
+	if (visualiser && typeof visualiser.setIntensityMultiplier === 'function') {
+		visualiser.setIntensityMultiplier(value);
+	}
+}
+
+export function setDynamicLerpEnabled(enabled: boolean) {
+	dynamicLerpEnabled = enabled;
+	if (visualiser && typeof visualiser.setDynamicLerpEnabled === 'function') {
+		visualiser.setDynamicLerpEnabled(enabled);
+	}
+}
 
 export { initVisualiser, ensureVisualiserConnected };
