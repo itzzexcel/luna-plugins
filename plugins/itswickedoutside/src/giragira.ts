@@ -614,11 +614,11 @@ export class AudioVisualiser implements AudioVisualiserAPI {
 
 		this.elements.vignette.style.boxShadow = vignetteBoxShadow;
 
-		// use same colour as vignette for the glow, with alpha based on intensity
+		const hue = 200 + frequency / 10;
 		const glowBackground = `
 			radial-gradient(ellipse 140% 120% at 35% 70%,
-				rgba(${vignetteColour}, ${currentIntensity * 0.35}) 0%,
-				rgba(${vignetteColour}, ${currentIntensity * 0.18}) 30%,
+				hsla(${hue}, 80%, 60%, ${currentIntensity * 0.35}) 0%,
+				hsla(${hue + 30}, 70%, 50%, ${currentIntensity * 0.18}) 30%,
 				transparent 70%
 			)
 		`;
