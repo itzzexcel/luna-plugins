@@ -58,6 +58,8 @@ export let currentDevice: string = "";
 
 export let vignetteIntensity: number = 1;
 export let dynamicLerpEnabled: boolean = true;
+export let dynamicIntensityEnabled: boolean = false;
+export let dynamicCoverColour: boolean = false;
 
 /**
  * Initialises or reinitialises the visualiser
@@ -84,6 +86,8 @@ const initVisualiser = (): void => {
 			showStats: false,
 			intensityMultiplier: vignetteIntensity,
 			useDynamicLerp: dynamicLerpEnabled,
+			useDynamicIntensity: dynamicIntensityEnabled,
+			useDynamicColour: dynamicCoverColour,
 		});
 
 	} catch (error) {
@@ -142,7 +146,6 @@ redux.intercept("player/SET_ACTIVE_DEVICE_SUCCESS", unloads, function (x: any) {
 
 	if (Array.isArray(availableDevices) && availableDevices.length === 0) {
 		console.log("[reactivo] No available devices, forcing the redux to set again the thingaling bleh");
-		currentDevice = redux.store["player/SET_AVAILABLE_DEVICES"]([]);
 	}
 
 	if (Array.isArray(availableDevices)) {
@@ -155,12 +158,6 @@ redux.intercept("player/SET_ACTIVE_DEVICE_SUCCESS", unloads, function (x: any) {
 			}
 		}
 	}
-});
-
-
-redux.intercept("player/SET_AVAILABLE_DEVICES", unloads, function (x: any) {
-	availableDevices = x;
-	console.log("[reactivo] Devices updated:", availableDevices);
 });
 
 unloads.add(() => {
@@ -176,11 +173,12 @@ unloads.add(() => {
 	}
 });
 
-MediaItem.onMediaTransition(unloads, async (mediaItem) => {
+MediaItem.onMediaTransition(unloads, async (mediaItem: MediaItem) => {
 	if (!mediaItem) {
 		if (visualiser) {
 			visualiser.disconnect();
 		}
+
 		return;
 	}
 
@@ -210,6 +208,20 @@ export function setDynamicLerpEnabled(enabled: boolean) {
 	dynamicLerpEnabled = enabled;
 	if (visualiser && typeof visualiser.setDynamicLerpEnabled === 'function') {
 		visualiser.setDynamicLerpEnabled(enabled);
+	}
+}
+
+export function setDynamicIntensityEnabled(enabled: boolean) {
+	dynamicIntensityEnabled = enabled;
+	if (visualiser && typeof visualiser.setDynamicIntensityEnabled === 'function') {
+		visualiser.setDynamicIntensityEnabled(enabled);
+	}
+}
+
+export function setDynamicColourArt(enabled: boolean) {
+	dynamicCoverColour = enabled;
+	if (visualiser && typeof visualiser.setDynamicColour === 'function') {
+		visualiser.setDynamicColour(enabled);
 	}
 }
 
