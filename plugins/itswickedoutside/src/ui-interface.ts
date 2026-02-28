@@ -53,13 +53,9 @@ export const retrieveCoverArt = function (): string | null {
 }
 
 export function retrieveCoverArtVibrant(imageElement: HTMLImageElement): string {
-	// console.log("[reactivo] extracting vibrant colour from image", imageElement.src);
-
 	const canvas = document.createElement('canvas');
 	canvas.width = imageElement.naturalWidth || imageElement.width;
 	canvas.height = imageElement.naturalHeight || imageElement.height;
-
-	// console.log("[reactivo] canvas dimensions", canvas.width, canvas.height);
 
 	if (canvas.width === 0 || canvas.height === 0) {
 		console.warn("[reactivo] invalid image dimensions, defaulting to white");
@@ -99,7 +95,6 @@ export function retrieveCoverArtVibrant(imageElement: HTMLImageElement): string 
 			return { h, s, v };
 		};
 
-		// Collect the vibrant colours in buckets
 		interface ColorBucket {
 			r: number;
 			g: number;
@@ -109,10 +104,15 @@ export function retrieveCoverArtVibrant(imageElement: HTMLImageElement): string 
 			totalVal: number;
 		}
 
-		const colorMap = new Map<number, ColorBucket>();
+		// we need two maps here - one for vibrant colors and one for everything
+		// this way we can find colors that are both punchy AND actually show up in the image
+		const vibrantMap = new Map<number, ColorBucket>();
+		const dominantMap = new Map<number, ColorBucket>();
 		const step = 6;
 
-		// First pass: Get vibrant colours
+		let totalPixels = 0;
+
+		// scan the image and sort colors into buckets
 		for (let y = 0; y < canvas.height; y += step) {
 			for (let x = 0; x < canvas.width; x += step) {
 				const idx = (y * canvas.width + x) * 4;
@@ -122,19 +122,16 @@ export function retrieveCoverArtVibrant(imageElement: HTMLImageElement): string 
 				const a = data[idx + 3];
 
 				if (a < 128) continue;
-				if (r < 20 && g < 20 && b < 20) continue;
+				if (r < 15 && g < 15 && b < 15) continue; // skip blacks
 
 				const { h, s, v } = rgbToHsv(r, g, b);
-
-				// filter colours iwht good saturation
-				if (s < 0.3) continue; // Ignorar dead colours
-				if (v < 0.2) continue; // Ignore very darks
-
-				// Group hues every 15°
 				const hueBucket = Math.round(h / 15) * 15;
 
-				if (!colorMap.has(hueBucket)) {
-					colorMap.set(hueBucket, {
+				totalPixels++;
+
+				// throw everything in the dominant map
+				if (!dominantMap.has(hueBucket)) {
+					dominantMap.set(hueBucket, {
 						r: 0, g: 0, b: 0,
 						count: 0,
 						totalSat: 0,
@@ -142,57 +139,97 @@ export function retrieveCoverArtVibrant(imageElement: HTMLImageElement): string 
 					});
 				}
 
-				const bucket = colorMap.get(hueBucket)!;
-				bucket.r += r;
-				bucket.g += g;
-				bucket.b += b;
-				bucket.count++;
-				bucket.totalSat += s;
-				bucket.totalVal += v;
+				const domBucket = dominantMap.get(hueBucket)!;
+				domBucket.r += r;
+				domBucket.g += g;
+				domBucket.b += b;
+				domBucket.count++;
+				domBucket.totalSat += s;
+				domBucket.totalVal += v;
+
+				// only add to vibrant map if it's actually colorful
+				if (s >= 0.3 && v >= 0.2) {
+					if (!vibrantMap.has(hueBucket)) {
+						vibrantMap.set(hueBucket, {
+							r: 0, g: 0, b: 0,
+							count: 0,
+							totalSat: 0,
+							totalVal: 0
+						});
+					}
+
+					const vibBucket = vibrantMap.get(hueBucket)!;
+					vibBucket.r += r;
+					vibBucket.g += g;
+					vibBucket.b += b;
+					vibBucket.count++;
+					vibBucket.totalSat += s;
+					vibBucket.totalVal += v;
+				}
 			}
 		}
 
-		if (colorMap.size === 0) {
-			// console.warn("[reactivo] no vibrant colors found, using fallback");
-			return "255, 255, 255";
-		}
+		// grab the top 3 most common colors
+		const topDominant = Array.from(dominantMap.entries())
+			.sort((a, b) => b[1].count - a[1].count)
+			.slice(0, 3)
+			.map(([hue]) => hue);
 
-		// Second pass: Found the most vibrant bucket
+		// now find the best vibrant color, preferring ones that show up a lot
 		let bestBucket: ColorBucket | null = null;
 		let bestScore = 0;
+		let bestHue = 0;
 
-		for (const bucket of colorMap.values()) {
+		for (const [hue, bucket] of vibrantMap.entries()) {
 			const avgSat = bucket.totalSat / bucket.count;
 			const avgVal = bucket.totalVal / bucket.count;
 
-			const vibrancy = avgSat * 2; // Priorise sat
-			const brightness = avgVal * 0.5;
-			const popularity = Math.min(bucket.count / 100, 1) * 0.5; // Bonus the dominant (mmmpppfgh)
+			// huge boost if this color is in the top 3
+			const isDominant = topDominant.includes(hue);
+			const dominanceBonus = isDominant ? 2.0 : 0;
 
-			const score = vibrancy + brightness + popularity;
+			const vibrancy = avgSat * 2.5;
+			const brightness = avgVal * 0.5;
+			const popularity = Math.log10(bucket.count + 1) * 0.3;
+
+			const score = vibrancy + brightness + popularity + dominanceBonus;
 
 			if (score > bestScore) {
 				bestScore = score;
 				bestBucket = bucket;
+				bestHue = hue;
+			}
+		}
+
+		// if we didn't find anything vibrant, just pick the most saturated common color
+		if (!bestBucket && dominantMap.size > 0) {
+			for (const bucket of dominantMap.values()) {
+				const avgSat = bucket.totalSat / bucket.count;
+				const avgVal = bucket.totalVal / bucket.count;
+				const score = avgSat + avgVal * 0.5;
+
+				if (score > bestScore) {
+					bestScore = score;
+					bestBucket = bucket;
+				}
 			}
 		}
 
 		if (!bestBucket) {
-			console.warn("[reactivo] no best bucket found");
 			return "255, 255, 255";
 		}
 
-		// Gamble
+		// average out the winning bucket
 		let finalR = Math.round(bestBucket.r / bestBucket.count);
 		let finalG = Math.round(bestBucket.g / bestBucket.count);
 		let finalB = Math.round(bestBucket.b / bestBucket.count);
 
-		// Boost saturation
+		// make it pop a bit more
 		const finalHsv = rgbToHsv(finalR, finalG, finalB);
-		const boostedSat = Math.min(finalHsv.s * 1.3, 1); // +30% sat
-		const boostedVal = Math.min(finalHsv.v * 1.1, 1); // +10% brightness
+		const boostedSat = Math.min(finalHsv.s * 1.35, 1);
+		const boostedVal = Math.min(finalHsv.v * 1.15, 1);
 
-		// Back to RGB
+		// convert back to RGB
 		const hsvToRgb = (h: number, s: number, v: number) => {
 			const c = v * s;
 			const x = c * (1 - Math.abs((h / 60) % 2 - 1));
@@ -219,8 +256,6 @@ export function retrieveCoverArtVibrant(imageElement: HTMLImageElement): string 
 		finalB = boosted.b;
 
 		const colour = `${finalR}, ${finalG}, ${finalB}`;
-		// console.log("[reactivo] picket a colour", colour,
-			// `(sat: ${boostedSat.toFixed(2)}, val: ${boostedVal.toFixed(2)}, pixels: ${bestBucket.count})`);
 
 		return colour;
 
