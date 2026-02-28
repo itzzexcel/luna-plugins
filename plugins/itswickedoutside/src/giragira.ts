@@ -2,7 +2,7 @@
  * Audio Visualiser Module
  */
 
-import { currentDevice } from ".";
+import { currentDevice, Settings } from ".";
 import { DataStoreService } from "./Settings";
 import { retrieveCoverArt, retrieveCoverArtVibrant } from "./ui-interface";
 

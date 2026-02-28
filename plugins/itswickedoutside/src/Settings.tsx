@@ -10,57 +10,58 @@ import { ReactiveStore } from "@luna/core"
 // Derive props and override onChange to accept a broader first param type
 type BaseSwitchProps = React.ComponentProps<typeof LunaSwitchSetting>;
 type AnySwitchProps = Omit<BaseSwitchProps, "onChange"> & {
-    onChange: (_: unknown, checked: boolean) => void;
-    checked: boolean;
+	onChange: (_: unknown, checked: boolean) => void;
+	checked: boolean;
 };
 
 const AnySwitch = LunaSwitchSetting as unknown as React.ComponentType<AnySwitchProps>;
 
 export const DataStoreService = await ReactiveStore.getPluginStorage("reactivo", {
-    vignetteIntensity: 2,
-    dynamicLerpEnabled: true,
-    dynamicIntensityEnabled: false,
-    vignetteUsesArtworkColourEnabled: false,
-    vignetteColourBrightnessBoost: 1
+	vignetteIntensity: 1,
+	dynamicLerpEnabled: true,
+	dynamicIntensityEnabled: false,
+	vignetteUsesArtworkColourEnabled: true,
+	isFirstRan: false
 })
 
 export const Settings = () => {
-    const [intensity, setIntensity] = React.useState<number>(DataStoreService.vignetteIntensity);
-    const [dynamic, setDynamic] = React.useState<boolean>(DataStoreService.dynamicLerpEnabled);
-    const [dynamicIntensity, setDynamicIntensityState] = React.useState<boolean>(DataStoreService.dynamicIntensityEnabled);
-    const [artworkColourVignette, setArtVignetteChange] = React.useState<boolean>(DataStoreService.vignetteUsesArtworkColourEnabled);
+	const [intensity, setIntensity] = React.useState<number>(DataStoreService.vignetteIntensity);
+	const [dynamic, setDynamic] = React.useState<boolean>(DataStoreService.dynamicLerpEnabled);
+	const [dynamicIntensity, setDynamicIntensityState] = React.useState<boolean>(DataStoreService.dynamicIntensityEnabled);
+	const [artworkColourVignette, setArtVignetteChange] = React.useState<boolean>(DataStoreService.vignetteUsesArtworkColourEnabled);
+	const [wasRanForFirstTime, setRanForFirstTime] = React.useState<boolean>(DataStoreService.isFirstRan);
 
-    const onIntensityChange = React.useCallback((val?: any) => {
-        if (isNaN(val)) val = 1;
-        DataStoreService.vignetteIntensity = val;
-        setIntensity(DataStoreService.vignetteIntensity);
-        setVignetteIntensity(DataStoreService.vignetteIntensity);
-    }, []);
+	const onIntensityChange = React.useCallback((val?: any) => {
+		if (isNaN(val)) val = 1;
+		DataStoreService.vignetteIntensity = val;
+		setIntensity(DataStoreService.vignetteIntensity);
+		setVignetteIntensity(DataStoreService.vignetteIntensity);
+	}, []);
 
-    const onDynamicChange = React.useCallback((_: unknown, checked?: boolean) => {
-        DataStoreService.dynamicLerpEnabled = !!checked;
-        setDynamic(DataStoreService.dynamicLerpEnabled);
-        setDynamicLerpEnabled(DataStoreService.dynamicLerpEnabled);
-    }, []);
+	const onDynamicChange = React.useCallback((_: unknown, checked?: boolean) => {
+		DataStoreService.dynamicLerpEnabled = !!checked;
+		setDynamic(DataStoreService.dynamicLerpEnabled);
+		setDynamicLerpEnabled(DataStoreService.dynamicLerpEnabled);
+	}, []);
 
-    const onDynamicIntensityChange = React.useCallback((_: unknown, checked?: boolean) => {
-        DataStoreService.dynamicIntensityEnabled = !!checked;
-        setDynamicIntensityState(DataStoreService.dynamicIntensityEnabled);
-        setDynamicIntensityEnabled(DataStoreService.dynamicIntensityEnabled);
-    }, []);
+	const onDynamicIntensityChange = React.useCallback((_: unknown, checked?: boolean) => {
+		DataStoreService.dynamicIntensityEnabled = !!checked;
+		setDynamicIntensityState(DataStoreService.dynamicIntensityEnabled);
+		setDynamicIntensityEnabled(DataStoreService.dynamicIntensityEnabled);
+	}, []);
 
-    const onArtVignetteChange = React.useCallback((_: unknown, checked?: boolean) => {
-        DataStoreService.vignetteUsesArtworkColourEnabled = !!checked;
-        setArtVignetteChange(DataStoreService.vignetteUsesArtworkColourEnabled);
-        setDynamicColourArt(DataStoreService.vignetteUsesArtworkColourEnabled);
-    }, []);
+	const onArtVignetteChange = React.useCallback((_: unknown, checked?: boolean) => {
+		DataStoreService.vignetteUsesArtworkColourEnabled = !!checked;
+		setArtVignetteChange(DataStoreService.vignetteUsesArtworkColourEnabled);
+		setDynamicColourArt(DataStoreService.vignetteUsesArtworkColourEnabled);
+	}, []);
 
-    return (
-        <LunaSettings>
-            <LunaNumberSetting title="Vignette Intensity" value={intensity} min={0} max={5} step={1} desc="Multiplier for vignette intensity (default: 2)" onNumber={onIntensityChange} />
-            <AnySwitch title="Dynamic Lerp" checked={dynamic} desc="Enable BPM-driven lerp adjustments" onChange={onDynamicChange} />
-            <AnySwitch title="Dynamic Intensity (WIP)" checked={dynamicIntensity} desc="Scales intensity based on audio content (works better with low-bass songs)" onChange={onDynamicIntensityChange} />
-            <AnySwitch title="Vignette Colour uses Artwork Colours" checked={artworkColourVignette} desc="Changes the vignette colour to the most vibrant colour of the currently playing song artwork." onChange={onArtVignetteChange} />
-        </LunaSettings>
-    );
+	return (
+		<LunaSettings>
+			<LunaNumberSetting title="Vignette Intensity" value={intensity} min={0} max={5} step={1} desc="Multiplier for vignette intensity (default: 2)" onNumber={onIntensityChange} />
+			<AnySwitch title="Dynamic Lerp" checked={dynamic} desc="Enable BPM-driven lerp adjustments" onChange={onDynamicChange} />
+			<AnySwitch title="Dynamic Intensity (WIP)" checked={dynamicIntensity} desc="Scales intensity based on audio content (works better with low-bass songs)" onChange={onDynamicIntensityChange} />
+			<AnySwitch title="Vignette Colour uses Artwork Colours" checked={artworkColourVignette} desc="Changes the vignette colour to the most vibrant colour of the currently playing song artwork." onChange={onArtVignetteChange} />
+		</LunaSettings>
+	);
 };

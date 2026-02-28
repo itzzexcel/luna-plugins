@@ -46,6 +46,7 @@ import { GetNPView } from "./ui-interface";
 
 
 import createAudioVisualiser, { AudioVisualiserAPI } from "./giragira";
+import { DataStoreService, Settings } from "./Settings";
 
 export { Settings } from "./Settings";
 export const { trace, errSignal } = Tracer("[reactivo]");
@@ -65,6 +66,15 @@ export let dynamicCoverColour: boolean = false;
  * Initialises or reinitialises the visualiser
  */
 const initVisualiser = (): void => {
+	if (DataStoreService.isFirstRan === false) {
+		try {
+			window.open("https://github.com/itzzexcel/luna-plugins/tree/master/plugins/itswickedoutside#installation");
+		} catch (e) { }
+		DataStoreService.isFirstRan = true;
+	} else {
+		console.log("[reactivo] installation screen skipped");
+
+	}
 	try {
 		// Clean up previous instance if it exists
 		if (visualiser) {
