@@ -29,7 +29,6 @@ export const Settings = () => {
 	const [dynamic, setDynamic] = React.useState<boolean>(DataStoreService.dynamicLerpEnabled);
 	const [dynamicIntensity, setDynamicIntensityState] = React.useState<boolean>(DataStoreService.dynamicIntensityEnabled);
 	const [artworkColourVignette, setArtVignetteChange] = React.useState<boolean>(DataStoreService.vignetteUsesArtworkColourEnabled);
-	const [wasRanForFirstTime, setRanForFirstTime] = React.useState<boolean>(DataStoreService.isFirstRan);
 
 	const onIntensityChange = React.useCallback((val?: any) => {
 		if (isNaN(val)) val = 1;
