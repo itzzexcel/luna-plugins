@@ -57,7 +57,7 @@ let visualiser: AudioVisualiserAPI | null = null;
 export let availableDevices: any[] = [];
 export let currentDevice: string = "";
 
-export let vignetteIntensity: number = 1;
+export let vignetteIntensity: number = DataStoreService.vignetteIntensity;
 export let dynamicLerpEnabled: boolean = true;
 export let dynamicIntensityEnabled: boolean = false;
 export let dynamicCoverColour: boolean = false;
