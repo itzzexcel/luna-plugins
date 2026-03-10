@@ -247,7 +247,7 @@ export function retrieveCoverArtVibrant(imageElement: HTMLImageElement): string 
 
 		// if the color came out a bit dark, nudge brightness up just enough to feel present
 		// — kept intentionally small so it still reads as the same color from the cover
-		const valBoost = finalHsv.v < 0.5 ? 1.9 : 1.15;
+		const valBoost = finalHsv.v < 0.4 ? 1.75 : 1.15;
 		const boostedVal = Math.min(finalHsv.v * valBoost, 1);
 
 		// convert back to RGB
