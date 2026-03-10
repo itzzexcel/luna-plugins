@@ -17,7 +17,7 @@ type AnySwitchProps = Omit<BaseSwitchProps, "onChange"> & {
 const AnySwitch = LunaSwitchSetting as unknown as React.ComponentType<AnySwitchProps>;
 
 export const DataStoreService = await ReactiveStore.getPluginStorage("reactivo", {
-	vignetteIntensity: 1,
+	vignetteIntensity: 2,
 	dynamicLerpEnabled: true,
 	dynamicIntensityEnabled: false,
 	vignetteUsesArtworkColourEnabled: true,
