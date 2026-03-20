@@ -290,7 +290,6 @@ export const bruh = <T>(obj: T): T => {
     return JSON.parse(JSON.stringify(obj));
 };
 
-
 class wTidal {
 	public static readonly PlayState = PlayState;
 	public static get featureFlags() {
