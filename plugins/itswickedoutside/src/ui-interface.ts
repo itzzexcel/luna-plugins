@@ -1,6 +1,6 @@
 // native color extraction, no external dependency
 
-import { objectify } from "@inrixia/helpers";
+declare const objectify: <T>(obj: T) => T;
 import { redux, PlayState } from "@luna/lib";
 
 
