@@ -1,6 +1,4 @@
 // native color extraction, no external dependency
-
-declare const objectify: <T>(obj: T) => T;
 import { redux, PlayState } from "@luna/lib";
 
 
@@ -287,12 +285,18 @@ export function retrieveCoverArtVibrant(imageElement: HTMLImageElement): string 
 	}
 }
 
+
+export const bruh = <T>(obj: T): T => {
+    return JSON.parse(JSON.stringify(obj));
+};
+
+
 class wTidal {
 	public static readonly PlayState = PlayState;
 	public static get featureFlags() {
 		const { flags, userOverrides } = redux.store.getState().featureFlags;
 
-		const featureFlags = objectify(flags);
+		const featureFlags = bruh(flags);
 		for (const key in userOverrides) {
 			featureFlags[key].value = userOverrides[key];
 		}
