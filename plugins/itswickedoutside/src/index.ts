@@ -42,11 +42,10 @@ No me fío
 
 import { LunaUnload, Tracer } from "@luna/core";
 import { MediaItem, redux } from "@luna/lib";
-import { GetNPView } from "./ui-interface";
-
+import { GetNPView, getFeatureFlag, setFeatureFlag } from "./ui-interface";
 
 import createAudioVisualiser, { AudioVisualiserAPI } from "./giragira";
-import { DataStoreService, Settings } from "./Settings";
+import { DataStoreService } from "./Settings";
 
 export { Settings } from "./Settings";
 export const { trace, errSignal } = Tracer("[reactivo]");
@@ -62,10 +61,41 @@ export let dynamicLerpEnabled: boolean = true;
 export let dynamicIntensityEnabled: boolean = false;
 export let dynamicCoverColour: boolean = false;
 
+
+const fixbozoplayer = (): void => {
+	const name: string = "player-market-ui";
+	const fflagState: boolean | null = getFeatureFlag(name);
+	
+	if (fflagState === true) {
+		console.log("new player fflag detected, rolling back...");
+		try {
+			setFeatureFlag(name, false);
+			console.log("apparently fixed");
+		} catch (error) {
+			console.error("Error fixing bozo player:", error);
+		}
+	}
+};
+
 /**
  * Initialises or reinitialises the visualiser
  */
 const initVisualiser = (): void => {
+
+	// const { flags, userOverrides } = redux.store.getState().featureFlags;
+
+	// console.log("=== Feature Flags ===");
+
+	// for (const [flagName, flag] of Object.entries(flags) as [string, redux.FeatureFlag][]) {
+	// 	const userValue = flagName in userOverrides ? userOverrides[flagName] : null;
+	// 	const currentValue = userValue !== null ? userValue : flag.value;
+	// 	const hasOverride = userValue !== null ? " (overridden)" : "";
+
+	// 	console.log(`${flagName}: ${currentValue}${hasOverride}`);
+	// }
+
+	fixbozoplayer();
+
 	if (DataStoreService.isFirstRan === false) {
 		try {
 			window.open("https://github.com/itzzexcel/luna-plugins/tree/master/plugins/itswickedoutside#installation");
@@ -76,6 +106,9 @@ const initVisualiser = (): void => {
 
 	}
 	try {
+		// Just
+		fixbozoplayer();
+
 		// Clean up previous instance if it exists
 		if (visualiser) {
 			visualiser.disconnect();

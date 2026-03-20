@@ -1,5 +1,8 @@
 // native color extraction, no external dependency
 
+import { objectify } from "@inrixia/helpers";
+import { redux, PlayState } from "@luna/lib";
+
 
 export const GetNPView = function (params?: any): HTMLElement {
 	const element =
@@ -282,4 +285,38 @@ export function retrieveCoverArtVibrant(imageElement: HTMLImageElement): string 
 		console.error("[reactivo] error extracting color:", error);
 		return "255, 255, 255";
 	}
+}
+
+class wTidal {
+	public static readonly PlayState = PlayState;
+	public static get featureFlags() {
+		const { flags, userOverrides } = redux.store.getState().featureFlags;
+
+		const featureFlags = objectify(flags);
+		for (const key in userOverrides) {
+			featureFlags[key].value = userOverrides[key];
+		}
+		return featureFlags;
+	}
+}
+
+export function setFeatureFlag(flagName: string, value: boolean): void {
+	const { flags } = redux.store.getState().featureFlags;
+	
+	if (flagName in flags && flags[flagName].value !== value) {
+		redux.actions["featureFlags/TOGGLE_USER_OVERRIDE"]({
+			...flags[flagName],
+			value
+		});
+	}
+}
+
+export function getFeatureFlag(flagName: string): boolean | null {
+	const currentFlags = wTidal.featureFlags;
+	
+	if (flagName in currentFlags) {
+		return currentFlags[flagName].value;
+	}
+	
+	return null;
 }
