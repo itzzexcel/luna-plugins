@@ -1,7 +1,7 @@
 // native color extraction, no external dependency
 import { redux, PlayState } from "@luna/lib";
 
-const debug = true;
+const debug = false;
 
 const isNPViewHidden = (el: HTMLElement) =>
 	el.className.includes("_nowPlayingHidden");
