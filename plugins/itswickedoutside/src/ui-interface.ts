@@ -54,7 +54,8 @@ export const retrieveCoverArt = function (): string | null {
 	const isPlayerMarket = getFeatureFlag("player-market-ui") === true;
 
 	const src = isPlayerMarket
-		? retrieveImageSrc('[data-test="now-playing-artwork"]')
+		? retrieveImageSrc('[data-test="creator-content-now-playing-image"]')
+		?? retrieveImageSrc('[data-test="now-playing-artwork"]')
 		?? retrieveVideoFallbackSrc()
 		: retrieveImageSrc('figure[class*="_albumImage"] > div > div > div > img')
 		?? retrieveVideoFallbackSrc();
