@@ -1,8 +1,8 @@
 /*
 {
-    "name": "Space Grey for TIDAL",
+    "name": "Variant Black for TIDAL",
     "author": "@itzzexcel",
-    "description": "Space Grey theme for TIDAL, originally as a variant of the Abyss Neptune (now available as Obsidian Theme from @meowarex)"
+    "description": "Variant Black for TIDAL"
 }
 */
 
@@ -350,7 +350,8 @@ button[data-test="close-now-playing"]:hover {
 }
 
 [data-test="media-table"]>div>div {
-    backdrop-filter: blur(50px) saturate(4) brightness(1);
+    backdrop-filter: blur(calc(15vh)) saturate(4) brightness(1);
+    background-image: var(--img) !important;
     border-radius: 8px;
     border: 1px solid var(--wave-color-opacity-contrast-fill-ultra-thin) !important;
 }
