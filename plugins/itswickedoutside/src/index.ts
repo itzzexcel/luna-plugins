@@ -63,18 +63,18 @@ export let dynamicCoverColour: boolean = false;
 
 
 const fixbozoplayer = (): void => {
-	const name: string = "player-market-ui";
-	const fflagState: boolean | null = getFeatureFlag(name);
+	// const name: string = "player-market-ui";
+	// const fflagState: boolean | null = getFeatureFlag(name);
 	
-	if (fflagState === true) {
-		console.log("new player fflag detected, rolling back...");
-		try {
-			setFeatureFlag(name, false);
-			console.log("apparently fixed");
-		} catch (error) {
-			console.error("Error fixing bozo player:", error);
-		}
-	}
+	// if (fflagState === true) {
+	// 	console.log("new player fflag detected, rolling back...");
+	// 	try {
+	// 		setFeatureFlag(name, false);
+	// 		console.log("apparently fixed");
+	// 	} catch (error) {
+	// 		console.error("Error fixing bozo player:", error);
+	// 	}
+	// }
 };
 
 /**
@@ -168,7 +168,6 @@ const initWhenReady = (): void => {
 initWhenReady();
 
 redux.intercept("view/ENTERED_NOWPLAYING", unloads, function () {
-	visualiser?.togglePause(true);
 	if (!visualiser) {
 		initVisualiser();
 	} else {
@@ -177,6 +176,8 @@ redux.intercept("view/ENTERED_NOWPLAYING", unloads, function () {
 			console.log("[reactivo] reconnected successfully");
 		}
 	}
+	visualiser?.togglePause(true);
+	console.log("npview enter");
 });
 
 redux.intercept("view/EXITED_NOWPLAYING", unloads, function () {
@@ -184,6 +185,8 @@ redux.intercept("view/EXITED_NOWPLAYING", unloads, function () {
 	visualiser?.disconnect();
 	visualiser?.destroy();
 	visualiser = null;
+	console.log("npview exit");
+	
 });
 
 redux.intercept("player/SET_ACTIVE_DEVICE_SUCCESS", unloads, function (x: any) {

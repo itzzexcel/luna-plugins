@@ -1,57 +1,68 @@
 // native color extraction, no external dependency
 import { redux, PlayState } from "@luna/lib";
 
+const debug = true;
 
-export const GetNPView = function (params?: any): HTMLElement {
-	const element =
-		document.querySelector<HTMLElement>('[data-test="now-playing"]') ||
-		document.getElementById('nowPlaying') ||
-		document.querySelector<HTMLElement>('section[class*="_nowPlayingContainer"]');
+const isNPViewHidden = (el: HTMLElement) =>
+	el.className.includes("_nowPlayingHidden");
 
-	if (!element) {
-		throw new Error('bleh');
-	}
+export const GetNPView = function (): HTMLElement {
+	const isPlayerMarket = getFeatureFlag("player-market-ui") === true;
+
+	const selectors = isPlayerMarket
+		? ['section[class*="_nowPlayingContainer"]']
+		: [
+			'[data-test="now-playing"]',
+			'section[class*="_nowPlayingContainer"]',
+		];
+
+	const element = selectors
+		.map(s => document.querySelector<HTMLElement>(s)) 
+		.find(Boolean);
+
+	if (!element) throw new Error("Couldn't find the place to setup reactivo");
+
+	if (debug) element.style.outline = "2px solid red";
 
 	return element;
 };
 
 // Thank you @meowarex!
 // https://github.com/meowarex/TidalLuna-Plugins/blob/0a694a5bc0cb98f72506077f63134bcece555e0d/plugins/radiant-lyrics-luna/src/index.ts#L450
-export const retrieveCoverArt = function (): string | null {
-	// console.log("[reactivo] attempt to fetch cover art element");
-	const coverArtImageElement = document.querySelector(
-		'figure[class*="_albumImage"] > div > div > div > img'
+const upscaleUrl = (url: string, resolution: string) =>
+	url.replace(/\d+x\d+/, resolution);
+
+const retrieveImageSrc = (selector: string): string | null => {
+	const el = document.querySelector(selector) as HTMLImageElement | null;
+	if (!el) return null;
+
+	const src = upscaleUrl(el.src, "1280x1280");
+	if (el.src !== src) el.src = src;
+	return src;
+};
+
+const retrieveVideoFallbackSrc = (): string | null => {
+	const el = document.querySelector(
+		'[data-test="current-media-imagery"] [class*="_videoFallback"]'
 	) as HTMLImageElement | null;
+	if (!el) return null;
 
-	let coverArtImageSrc: string | null = null;
+	return upscaleUrl(el.src, "1280x720");
+};
 
-	if (coverArtImageElement) {
-		// console.log("[reactivo] found cover art image element, src:", coverArtImageElement.src);
-		coverArtImageSrc = coverArtImageElement.src;
-		coverArtImageSrc = coverArtImageSrc.replace(/\d+x\d+/, "1280x1280");
+export const retrieveCoverArt = function (): string | null {
+	const isPlayerMarket = getFeatureFlag("player-market-ui") === true;
 
-		if (coverArtImageElement.src !== coverArtImageSrc) {
-			coverArtImageElement.src = coverArtImageSrc;
-		}
-	} else {
-		const videoElement = document.querySelector(
-			'figure[class*="_albumImage"] > div > div > div > video'
-		) as HTMLVideoElement | null;
+	const src = isPlayerMarket
+		? retrieveImageSrc('[data-test="now-playing-artwork"]')
+		?? retrieveVideoFallbackSrc()
+		: retrieveImageSrc('figure[class*="_albumImage"] > div > div > div > img')
+		?? retrieveVideoFallbackSrc();
 
-		if (videoElement) {
-			coverArtImageSrc = videoElement.getAttribute("poster");
-			if (coverArtImageSrc) {
-				coverArtImageSrc = coverArtImageSrc.replace(/\d+x\d+/, "1280x1280");
-			}
-		} else {
-			console.log("[reactivo] no image or video element for cover art");
-			return null;
-		}
-	}
-
-	// console.log("[reactivo] returning cover art URL:", coverArtImageSrc);
-	return coverArtImageSrc;
-}
+	if (!src) console.log("[reactivo] no image or video element for cover art");
+	// console.log(src);
+	return src ?? null;
+};
 
 export function retrieveCoverArtVibrant(imageElement: HTMLImageElement): string {
 	const canvas = document.createElement('canvas');
@@ -298,7 +309,7 @@ export function retrieveCoverArtVibrant(imageElement: HTMLImageElement): string 
 
 
 export const bruh = <T>(obj: T): T => {
-    return JSON.parse(JSON.stringify(obj));
+	return JSON.parse(JSON.stringify(obj));
 };
 
 class wTidal {
@@ -316,7 +327,7 @@ class wTidal {
 
 export function setFeatureFlag(flagName: string, value: boolean): void {
 	const { flags } = redux.store.getState().featureFlags;
-	
+
 	if (flagName in flags && flags[flagName].value !== value) {
 		redux.actions["featureFlags/TOGGLE_USER_OVERRIDE"]({
 			...flags[flagName],
@@ -327,10 +338,10 @@ export function setFeatureFlag(flagName: string, value: boolean): void {
 
 export function getFeatureFlag(flagName: string): boolean | null {
 	const currentFlags = wTidal.featureFlags;
-	
+
 	if (flagName in currentFlags) {
 		return currentFlags[flagName].value;
 	}
-	
+
 	return null;
 }
