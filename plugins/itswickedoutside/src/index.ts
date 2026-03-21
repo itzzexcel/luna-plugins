@@ -182,7 +182,8 @@ redux.intercept("view/ENTERED_NOWPLAYING", unloads, function () {
 redux.intercept("view/EXITED_NOWPLAYING", unloads, function () {
 	visualiser?.togglePause(false);
 	visualiser?.disconnect();
-
+	visualiser?.destroy();
+	visualiser = null;
 });
 
 redux.intercept("player/SET_ACTIVE_DEVICE_SUCCESS", unloads, function (x: any) {

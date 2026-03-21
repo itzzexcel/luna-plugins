@@ -440,6 +440,10 @@ export class AudioVisualiser implements AudioVisualiserAPI {
 	// ws connection
 	private connect(): void {
 		try {
+			if (this.ws) {
+				this.ws.close();
+				this.ws = null;
+			}
 			this.ws = new WebSocket(this.options.wsUrl);
 
 			this.ws.onopen = () => {

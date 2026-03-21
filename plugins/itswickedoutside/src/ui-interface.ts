@@ -55,13 +55,24 @@ export const retrieveCoverArt = function (): string | null {
 
 export function retrieveCoverArtVibrant(imageElement: HTMLImageElement): string {
 	const canvas = document.createElement('canvas');
-	canvas.width = imageElement.naturalWidth || imageElement.width;
-	canvas.height = imageElement.naturalHeight || imageElement.height;
+	let canvasWidth = imageElement.naturalWidth || imageElement.width;
+	let canvasHeight = imageElement.naturalHeight || imageElement.height;
 
-	if (canvas.width === 0 || canvas.height === 0) {
+	if (canvasWidth === 0 || canvasHeight === 0) {
 		console.warn("[reactivo] invalid image dimensions, defaulting to white");
 		return "255, 255, 255";
 	}
+
+	// Scale down large images to reduce memory usage
+	const maxSize = 512;
+	if (canvasWidth > maxSize || canvasHeight > maxSize) {
+		const scale = Math.min(maxSize / canvasWidth, maxSize / canvasHeight);
+		canvasWidth = Math.floor(canvasWidth * scale);
+		canvasHeight = Math.floor(canvasHeight * scale);
+	}
+
+	canvas.width = canvasWidth;
+	canvas.height = canvasHeight;
 
 	const ctx = canvas.getContext('2d', { willReadFrequently: true });
 	if (!ctx) {
@@ -70,7 +81,7 @@ export function retrieveCoverArtVibrant(imageElement: HTMLImageElement): string 
 	}
 
 	try {
-		ctx.drawImage(imageElement, 0, 0);
+		ctx.drawImage(imageElement, 0, 0, canvasWidth, canvasHeight);
 		const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
 		const data = imageData.data;
 
