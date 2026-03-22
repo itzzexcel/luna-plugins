@@ -12,12 +12,12 @@ export const GetNPView = function (): HTMLElement {
 	const selectors = isPlayerMarket
 		? ['section[class*="_nowPlayingContainer"]']
 		: [
-			'[data-test="now-playing"]',
-			'section[class*="_nowPlayingContainer"]',
-		];
+				'[data-test="now-playing"]',
+				'section[class*="_nowPlayingContainer"]',
+			];
 
 	const element = selectors
-		.map(s => document.querySelector<HTMLElement>(s)) 
+		.map((s) => document.querySelector<HTMLElement>(s))
 		.find(Boolean);
 
 	if (!element) throw new Error("Couldn't find the place to setup reactivo");
@@ -43,7 +43,7 @@ const retrieveImageSrc = (selector: string): string | null => {
 
 const retrieveVideoFallbackSrc = (): string | null => {
 	const el = document.querySelector(
-		'[data-test="current-media-imagery"] [class*="_videoFallback"]'
+		'[data-test="current-media-imagery"] [class*="_videoFallback"]',
 	) as HTMLImageElement | null;
 	if (!el) return null;
 
@@ -54,24 +54,31 @@ export const retrieveCoverArt = function (): string | null {
 	const isPlayerMarket = getFeatureFlag("player-market-ui") === true;
 
 	const src = isPlayerMarket
-		? retrieveImageSrc('[data-test="creator-content-now-playing-image"]')
-		?? retrieveImageSrc('[data-test="now-playing-artwork"]')
-		?? retrieveVideoFallbackSrc()
-		: retrieveImageSrc('figure[class*="_albumImage"] > div > div > div > img')
-		?? retrieveVideoFallbackSrc();
+		? (retrieveImageSrc(
+				'[data-test="creator-content-now-playing-image"]',
+			) ??
+			retrieveImageSrc('[data-test="now-playing-artwork"]') ??
+			retrieveVideoFallbackSrc())
+		: (retrieveImageSrc(
+				'figure[class*="_albumImage"] > div > div > div > img',
+			) ?? retrieveVideoFallbackSrc());
 
 	if (!src) console.log("[reactivo] no image or video element for cover art");
 	// console.log(src);
 	return src ?? null;
 };
 
-export function retrieveCoverArtVibrant(imageElement: HTMLImageElement): string {
-	const canvas = document.createElement('canvas');
+export function retrieveCoverArtVibrant(
+	imageElement: HTMLImageElement,
+): string {
+	const canvas = document.createElement("canvas");
 	let canvasWidth = imageElement.naturalWidth || imageElement.width;
 	let canvasHeight = imageElement.naturalHeight || imageElement.height;
 
 	if (canvasWidth === 0 || canvasHeight === 0) {
-		console.warn("[reactivo] invalid image dimensions, defaulting to white");
+		console.warn(
+			"[reactivo] invalid image dimensions, defaulting to white",
+		);
 		return "255, 255, 255";
 	}
 
@@ -86,7 +93,7 @@ export function retrieveCoverArtVibrant(imageElement: HTMLImageElement): string 
 	canvas.width = canvasWidth;
 	canvas.height = canvasHeight;
 
-	const ctx = canvas.getContext('2d', { willReadFrequently: true });
+	const ctx = canvas.getContext("2d", { willReadFrequently: true });
 	if (!ctx) {
 		console.warn("[reactivo] failed to get canvas context");
 		return "255, 255, 255";
@@ -98,7 +105,9 @@ export function retrieveCoverArtVibrant(imageElement: HTMLImageElement): string 
 		const data = imageData.data;
 
 		const rgbToHsv = (r: number, g: number, b: number) => {
-			r /= 255; g /= 255; b /= 255;
+			r /= 255;
+			g /= 255;
+			b /= 255;
 			const max = Math.max(r, g, b);
 			const min = Math.min(r, g, b);
 			const d = max - min;
@@ -157,7 +166,14 @@ export function retrieveCoverArtVibrant(imageElement: HTMLImageElement): string 
 			if (isPerimeter) perimeterHues.add(hueBucket);
 
 			if (!dominantMap.has(hueBucket)) {
-				dominantMap.set(hueBucket, { r: 0, g: 0, b: 0, count: 0, totalSat: 0, totalVal: 0 });
+				dominantMap.set(hueBucket, {
+					r: 0,
+					g: 0,
+					b: 0,
+					count: 0,
+					totalSat: 0,
+					totalVal: 0,
+				});
 			}
 
 			const domBucket = dominantMap.get(hueBucket)!;
@@ -170,7 +186,14 @@ export function retrieveCoverArtVibrant(imageElement: HTMLImageElement): string 
 
 			if (s >= 0.3 && v >= 0.2) {
 				if (!vibrantMap.has(hueBucket)) {
-					vibrantMap.set(hueBucket, { r: 0, g: 0, b: 0, count: 0, totalSat: 0, totalVal: 0 });
+					vibrantMap.set(hueBucket, {
+						r: 0,
+						g: 0,
+						b: 0,
+						count: 0,
+						totalSat: 0,
+						totalVal: 0,
+					});
 				}
 
 				const vibBucket = vibrantMap.get(hueBucket)!;
@@ -233,7 +256,12 @@ export function retrieveCoverArtVibrant(imageElement: HTMLImageElement): string 
 			// scores ~10x more here than one at 3%, making presence matter a lot more
 			const popularity = coverage * 3.0;
 
-			const score = vibrancy + brightness + popularity + dominanceBonus + perimeterBonus;
+			const score =
+				vibrancy +
+				brightness +
+				popularity +
+				dominanceBonus +
+				perimeterBonus;
 
 			if (score > bestScore) {
 				bestScore = score;
@@ -277,21 +305,42 @@ export function retrieveCoverArtVibrant(imageElement: HTMLImageElement): string 
 		// convert back to RGB
 		const hsvToRgb = (h: number, s: number, v: number) => {
 			const c = v * s;
-			const x = c * (1 - Math.abs((h / 60) % 2 - 1));
+			const x = c * (1 - Math.abs(((h / 60) % 2) - 1));
 			const m = v - c;
-			let r = 0, g = 0, b = 0;
+			let r = 0,
+				g = 0,
+				b = 0;
 
-			if (h < 60) { r = c; g = x; b = 0; }
-			else if (h < 120) { r = x; g = c; b = 0; }
-			else if (h < 180) { r = 0; g = c; b = x; }
-			else if (h < 240) { r = 0; g = x; b = c; }
-			else if (h < 300) { r = x; g = 0; b = c; }
-			else { r = c; g = 0; b = x; }
+			if (h < 60) {
+				r = c;
+				g = x;
+				b = 0;
+			} else if (h < 120) {
+				r = x;
+				g = c;
+				b = 0;
+			} else if (h < 180) {
+				r = 0;
+				g = c;
+				b = x;
+			} else if (h < 240) {
+				r = 0;
+				g = x;
+				b = c;
+			} else if (h < 300) {
+				r = x;
+				g = 0;
+				b = c;
+			} else {
+				r = c;
+				g = 0;
+				b = x;
+			}
 
 			return {
 				r: Math.round((r + m) * 255),
 				g: Math.round((g + m) * 255),
-				b: Math.round((b + m) * 255)
+				b: Math.round((b + m) * 255),
 			};
 		};
 
@@ -301,13 +350,11 @@ export function retrieveCoverArtVibrant(imageElement: HTMLImageElement): string 
 		finalB = boosted.b;
 
 		return `${finalR}, ${finalG}, ${finalB}`;
-
 	} catch (error) {
 		console.error("[reactivo] error extracting color:", error);
 		return "255, 255, 255";
 	}
 }
-
 
 export const bruh = <T>(obj: T): T => {
 	return JSON.parse(JSON.stringify(obj));
@@ -332,7 +379,7 @@ export function setFeatureFlag(flagName: string, value: boolean): void {
 	if (flagName in flags && flags[flagName].value !== value) {
 		redux.actions["featureFlags/TOGGLE_USER_OVERRIDE"]({
 			...flags[flagName],
-			value
+			value,
 		});
 	}
 }

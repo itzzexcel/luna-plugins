@@ -61,11 +61,9 @@ export let dynamicLerpEnabled: boolean = true;
 export let dynamicIntensityEnabled: boolean = false;
 export let dynamicCoverColour: boolean = false;
 
-
 const fixbozoplayer = (): void => {
 	// const name: string = "player-market-ui";
 	// const fflagState: boolean | null = getFeatureFlag(name);
-
 	// if (fflagState === true) {
 	// 	console.log("new player fflag detected, rolling back...");
 	// 	try {
@@ -78,21 +76,21 @@ const fixbozoplayer = (): void => {
 };
 
 async function sendAnalytics(event: string, extraData?: any) {
-	const ANALYTICS_URL = 'https://reactivo.excelzzz.workers.dev/';
+	const ANALYTICS_URL = "https://reactivo.excelzzz.workers.dev/";
 
 	try {
 		await fetch(ANALYTICS_URL, {
-			method: 'POST',
-			headers: { 'Content-Type': 'application/json' },
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
 			body: JSON.stringify({
 				event,
 				timestamp: new Date().toISOString(),
 				userAgent: navigator.userAgent,
-				...extraData
-			})
+				...extraData,
+			}),
 		});
 	} catch (error) {
-		console.error('[reactivo] Failed to send analytics:', error);
+		console.error("[reactivo] Failed to send analytics:", error);
 	}
 }
 
@@ -100,7 +98,6 @@ async function sendAnalytics(event: string, extraData?: any) {
  * Initialises or reinitialises the visualiser
  */
 const initVisualiser = (): void => {
-
 	// const { flags, userOverrides } = redux.store.getState().featureFlags;
 
 	// console.log("=== Feature Flags ===");
@@ -117,12 +114,13 @@ const initVisualiser = (): void => {
 
 	if (DataStoreService.isFirstRan === false) {
 		try {
-			window.open("https://github.com/itzzexcel/luna-plugins/tree/master/plugins/itswickedoutside#installation");
-		} catch (e) { }
+			window.open(
+				"https://github.com/itzzexcel/luna-plugins/tree/master/plugins/itswickedoutside#installation",
+			);
+		} catch (e) {}
 		DataStoreService.isFirstRan = true;
 	} else {
 		console.log("[reactivo] installation screen skipped");
-
 	}
 	try {
 		// Just
@@ -141,7 +139,7 @@ const initVisualiser = (): void => {
 		// Create new visualiser instance
 		visualiser = createAudioVisualiser(nowPlaying, {
 			lerpFactor: 0.2,
-			wsUrl: 'ws://localhost:5343',
+			wsUrl: "ws://localhost:5343",
 			autoReconnect: true,
 			maxReconnectAttempts: 100,
 			showStatus: false,
@@ -150,9 +148,8 @@ const initVisualiser = (): void => {
 			useDynamicLerp: dynamicLerpEnabled,
 			useDynamicIntensity: dynamicIntensityEnabled,
 			useDynamicColour: dynamicCoverColour,
-			zIndex: getFeatureFlag("player-market-ui") ? 0 : -1
+			zIndex: getFeatureFlag("player-market-ui") ? 0 : -1,
 		});
-
 	} catch (error) {
 		console.error("Failed to initialize visualiser:", error);
 		visualiser = null;
@@ -177,10 +174,10 @@ const ensureVisualiserConnected = (): void => {
  * Initialises visualiser when DOM is ready
  */
 const initWhenReady = (): void => {
-	sendAnalytics('plugin_opened');
+	sendAnalytics("plugin_opened");
 
-	if (document.readyState === 'loading') {
-		document.addEventListener('DOMContentLoaded', initVisualiser);
+	if (document.readyState === "loading") {
+		document.addEventListener("DOMContentLoaded", initVisualiser);
 	} else {
 		initVisualiser();
 	}
@@ -210,19 +207,22 @@ redux.intercept("view/EXITED_NOWPLAYING", unloads, function () {
 	visualiser?.destroy();
 	visualiser = null;
 	console.log("npview exit");
-
 });
 
 redux.intercept("player/SET_ACTIVE_DEVICE_SUCCESS", unloads, function (x: any) {
-
 	if (Array.isArray(availableDevices) && availableDevices.length === 0) {
-		console.log("[reactivo] No available devices, forcing the redux to set again the thingaling bleh");
+		console.log(
+			"[reactivo] No available devices, forcing the redux to set again the thingaling bleh",
+		);
 	}
 
 	if (Array.isArray(availableDevices)) {
 		let deviceObject = availableDevices.find((d: any) => d.id === x);
 		if (deviceObject) {
-			console.log("[reactivo] Native Device ID:", deviceObject.nativeDeviceId);
+			console.log(
+				"[reactivo] Native Device ID:",
+				deviceObject.nativeDeviceId,
+			);
 			currentDevice = deviceObject.nativeDeviceId;
 			if (visualiser) {
 				visualiser.deviceChanged(deviceObject.nativeDeviceId);
@@ -260,7 +260,6 @@ MediaItem.onMediaTransition(unloads, async (mediaItem: MediaItem) => {
 		}
 
 		ensureVisualiserConnected();
-
 	} catch (error) {
 		console.error("Error in media transition:", error);
 		initVisualiser();
@@ -270,28 +269,31 @@ MediaItem.onMediaTransition(unloads, async (mediaItem: MediaItem) => {
 // UI / settings hooks
 export function setVignetteIntensity(value: number) {
 	vignetteIntensity = value;
-	if (visualiser && typeof visualiser.setIntensityMultiplier === 'function') {
+	if (visualiser && typeof visualiser.setIntensityMultiplier === "function") {
 		visualiser.setIntensityMultiplier(value);
 	}
 }
 
 export function setDynamicLerpEnabled(enabled: boolean) {
 	dynamicLerpEnabled = enabled;
-	if (visualiser && typeof visualiser.setDynamicLerpEnabled === 'function') {
+	if (visualiser && typeof visualiser.setDynamicLerpEnabled === "function") {
 		visualiser.setDynamicLerpEnabled(enabled);
 	}
 }
 
 export function setDynamicIntensityEnabled(enabled: boolean) {
 	dynamicIntensityEnabled = enabled;
-	if (visualiser && typeof visualiser.setDynamicIntensityEnabled === 'function') {
+	if (
+		visualiser &&
+		typeof visualiser.setDynamicIntensityEnabled === "function"
+	) {
 		visualiser.setDynamicIntensityEnabled(enabled);
 	}
 }
 
 export function setDynamicColourArt(enabled: boolean) {
 	dynamicCoverColour = enabled;
-	if (visualiser && typeof visualiser.setDynamicColour === 'function') {
+	if (visualiser && typeof visualiser.setDynamicColour === "function") {
 		visualiser.setDynamicColour(enabled);
 	}
 }
