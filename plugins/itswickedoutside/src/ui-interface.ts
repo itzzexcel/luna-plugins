@@ -12,9 +12,9 @@ export const GetNPView = function (): HTMLElement {
 	const selectors = isPlayerMarket
 		? ['section[class*="_nowPlayingContainer"]']
 		: [
-				'[data-test="now-playing"]',
-				'section[class*="_nowPlayingContainer"]',
-			];
+			'[data-test="now-playing"]',
+			'section[class*="_nowPlayingContainer"]',
+		];
 
 	const element = selectors
 		.map((s) => document.querySelector<HTMLElement>(s))
@@ -55,13 +55,13 @@ export const retrieveCoverArt = function (): string | null {
 
 	const src = isPlayerMarket
 		? (retrieveImageSrc(
-				'[data-test="creator-content-now-playing-image"]',
-			) ??
+			'[data-test="creator-content-now-playing-image"]',
+		) ??
 			retrieveImageSrc('[data-test="now-playing-artwork"]') ??
 			retrieveVideoFallbackSrc())
 		: (retrieveImageSrc(
-				'figure[class*="_albumImage"] > div > div > div > img',
-			) ?? retrieveVideoFallbackSrc());
+			'figure[class*="_albumImage"] > div > div > div > img',
+		) ?? retrieveVideoFallbackSrc());
 
 	if (!src) console.log("[reactivo] no image or video element for cover art");
 	// console.log(src);

@@ -95,8 +95,8 @@ async function sendAnalytics(event: string, extraData?: any) {
 }
 
 /**
- * Initialises or reinitialises the visualiser
- */
+* Initialises or reinitialises the visualiser
+*/
 const initVisualiser = (): void => {
 	// const { flags, userOverrides } = redux.store.getState().featureFlags;
 
@@ -117,7 +117,7 @@ const initVisualiser = (): void => {
 			window.open(
 				"https://github.com/itzzexcel/luna-plugins/tree/master/plugins/itswickedoutside#installation",
 			);
-		} catch (e) {}
+		} catch (e) { }
 		DataStoreService.isFirstRan = true;
 	} else {
 		console.log("[reactivo] installation screen skipped");
@@ -157,8 +157,8 @@ const initVisualiser = (): void => {
 };
 
 /**
- * Ensures visualiser is connected, reconnects if necessary
- */
+* Ensures visualiser is connected, reconnects if necessary
+*/
 const ensureVisualiserConnected = (): void => {
 	if (!visualiser) {
 		initVisualiser();
@@ -171,8 +171,8 @@ const ensureVisualiserConnected = (): void => {
 };
 
 /**
- * Initialises visualiser when DOM is ready
- */
+* Initialises visualiser when DOM is ready
+*/
 const initWhenReady = (): void => {
 	sendAnalytics("plugin_opened");
 
