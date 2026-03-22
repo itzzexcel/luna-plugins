@@ -60,22 +60,13 @@ class DynamicIntensityController {
 		const bass = analysis.bass;
 		if (!bass) return 0;
 
-		// Bass presence: how much bass energy is present
 		const rawBassPresence = Math.min(bass.average * 10000, 1);
-
-		// Frequency spread: penalizes very narrow frequency content
-		// (songs with only low bass should still be visible)
 		const freqSpread = Math.min(bass.frequency / 200, 1);
-
-		// Magnitude strength: the peak bass magnitude
 		const magnitudeStrength = Math.min(bass.strongest.magnitude * 100, 1);
 
-		// Smooth the bass presence to avoid jittery changes
 		this.bassPresence += (rawBassPresence - this.bassPresence) * this.smoothingFactor;
 		this.frequencySpread += (freqSpread - this.frequencySpread) * this.smoothingFactor;
 
-		// Compute combined dynamic intensity
-		// Weight: bass presence (60%), frequency diversity (20%), magnitude (20%)
 		const dynamicIntensity =
 			this.bassPresence * 0.6 +
 			this.frequencySpread * 0.2 +
@@ -109,9 +100,9 @@ class DynamicLerpController {
 			this.config = { ...this.config, ...config };
 		}
 	}
+
 	calculateBPMLerp(bpm: number): number {
 		const { bpmMin, bpmMax, lerpMin, lerpMax, curve } = this.config;
-
 		const normalizedBPM = Math.min(Math.max((bpm - bpmMin) / (bpmMax - bpmMin), 0), 1);
 
 		let curveFactor: number;
@@ -158,15 +149,12 @@ class DynamicLerpController {
 			totalWeight += weights.energy;
 		}
 
-
 		return totalWeight > 0 ? weightedSum / totalWeight : this.config.lerpMin;
 	}
 
 	update(targetLerp: number, deltaTime: number = 1 / 60): number {
 		this.targetLerp = targetLerp;
-
 		this.currentLerp += (this.targetLerp - this.currentLerp) * this.lerpTransitionSpeed;
-
 		return this.currentLerp;
 	}
 
@@ -211,12 +199,11 @@ export class AudioVisualiser implements AudioVisualiserAPI {
 	private cachedVignetteColour: string = "255, 255, 255";
 	private lastCoverUrl: string | null = null;
 
+	// Initialization
 	constructor(
 		containerSelector: string | HTMLElement,
 		options: AudioVisualiserOptions = {}
 	) {
-
-
 		this.options = {
 			wsUrl: 'ws://localhost:5343',
 			autoReconnect: true,
@@ -235,14 +222,14 @@ export class AudioVisualiser implements AudioVisualiserAPI {
 		};
 
 		this.lerpController = new DynamicLerpController({
-			bpmMin: 80,      // Min BPM expected
-			bpmMax: 180,     // Max BPM expected
-			lerpMin: 0.3,    // Minimum lerp factor
-			lerpMax: 0.8,    // Maximum lerp factor
-			curve: 'exponential' // Curve type
+			bpmMin: 80,
+			bpmMax: 180,
+			lerpMin: 0.3,
+			lerpMax: 0.8,
+			curve: 'exponential'
 		});
 
-		this.lerpController.setTransitionSpeed(0.1); // Transition smoothness
+		this.lerpController.setTransitionSpeed(0.1);
 		this.dynamicIntensityController = new DynamicIntensityController();
 
 		this.container = this.resolveContainer(containerSelector);
@@ -252,7 +239,6 @@ export class AudioVisualiser implements AudioVisualiserAPI {
 		this.connect();
 	}
 
-	// Resolves container from selector or element
 	private resolveContainer(selector: string | HTMLElement): HTMLElement {
 		if (typeof selector === 'string') {
 			const element = document.querySelector<HTMLElement>(selector);
@@ -430,14 +416,7 @@ export class AudioVisualiser implements AudioVisualiserAPI {
 		};
 	}
 
-	/**
-	 * Linear interpolation for smooth transitions
-	 */
-	private lerp(start: number, end: number, factor: number): number {
-		return start + (end - start) * factor;
-	}
-
-	// ws connection
+	// Connection management
 	private connect(): void {
 		try {
 			if (this.ws) {
@@ -477,12 +456,7 @@ export class AudioVisualiser implements AudioVisualiserAPI {
 			};
 
 			this.ws.onclose = () => {
-				// If explicitly disconnected, don't reconnect
 				if (!this.ws) return;
-
-				// this.elements.status.textContent = 'Disconnected';
-				// this.elements.status.style.background = 'rgba(255, 50, 50, 0.15)';
-				// this.elements.status.style.color = '#ff3232';
 
 				if (this.options.autoReconnect) {
 					this.scheduleReconnect();
@@ -490,12 +464,6 @@ export class AudioVisualiser implements AudioVisualiserAPI {
 			};
 		} catch (error) {
 			this.scheduleReconnect();
-		}
-	}
-
-	public deviceChanged(deviceId: string): void {
-		if (this.ws) {
-			this.ws?.send(deviceId);
 		}
 	}
 
@@ -512,13 +480,21 @@ export class AudioVisualiser implements AudioVisualiserAPI {
 		}, delay);
 	}
 
+	public deviceChanged(deviceId: string): void {
+		if (this.ws) {
+			this.ws?.send(deviceId);
+		}
+	}
+
 	public togglePause(pause: boolean): void {
 		this.options.isNowPlayingVisible = pause;
 	}
 
-	/**
-	 * Visualiser update
-	 */
+	// Visual updates
+	private lerp(start: number, end: number, factor: number): number {
+		return start + (end - start) * factor;
+	}
+
 	private update(analysis: AudioAnalysis): void {
 		if (!this.options.isNowPlayingVisible) {
 			return;
@@ -531,12 +507,8 @@ export class AudioVisualiser implements AudioVisualiserAPI {
 			return;
 		}
 
-		// Calculate intensity based on frequency and magnitude
-		const lowFreqIntensity = Math.max(0, 1 - (strongestBass.frequency - 20) / 200);
-		const magnitudeIntensity = Math.min(bassAverage * 10000, 1);
-		let baseIntensity = lowFreqIntensity * magnitudeIntensity;
+		let baseIntensity = this.calculateBaseIntensity(strongestBass, bassAverage);
 
-		// Apply dynamic intensity if enabled—scales based on multiple audio factors
 		if (this.options.useDynamicIntensity) {
 			const dynamicFactor = this.dynamicIntensityController.calculateDynamicIntensity(analysis);
 			baseIntensity = Math.max(baseIntensity, dynamicFactor * 0.5);
@@ -544,11 +516,24 @@ export class AudioVisualiser implements AudioVisualiserAPI {
 
 		const totalIntensity = baseIntensity * (this.options.intensityMultiplier ?? 1);
 
-		// Update target values
+		this.updateTargetValues(totalIntensity);
+		this.applyLerping();
+		this.applyEffects(strongestBass.frequency);
+	}
+
+	private calculateBaseIntensity(strongestBass: any, bassAverage: number): number {
+		const lowFreqIntensity = Math.max(0, 1 - (strongestBass.frequency - 20) / 200);
+		const magnitudeIntensity = Math.min(bassAverage * 10000, 1);
+		return lowFreqIntensity * magnitudeIntensity;
+	}
+
+	private updateTargetValues(totalIntensity: number): void {
 		this.state.targetVignetteSize = 100 + totalIntensity * 300;
 		this.state.targetVignetteBlur = 10 + totalIntensity * 200;
 		this.state.targetIntensity = totalIntensity;
+	}
 
+	private applyLerping(): void {
 		const { lerpFactor } = this.options;
 		const attackFactor = lerpFactor;
 		const decayFactor = lerpFactor * 0.15;
@@ -571,13 +556,8 @@ export class AudioVisualiser implements AudioVisualiserAPI {
 			this.state.targetIntensity,
 			getFactor(this.state.currentIntensity, this.state.targetIntensity)
 		);
-
-		this.applyEffects(strongestBass.frequency);
 	}
 
-	/**
-	* Applies visual effects based on current state
-	*/
 	private async applyEffects(frequency: number): Promise<void> {
 		const { currentVignetteSize, currentVignetteBlur, currentIntensity } = this.state;
 
@@ -588,11 +568,9 @@ export class AudioVisualiser implements AudioVisualiserAPI {
 			const coverUrl = retrieveCoverArt();
 			if (coverUrl && coverUrl !== this.lastCoverUrl) {
 				this.lastCoverUrl = coverUrl;
-				// console.log("[reactivo] New cover detected:", coverUrl);
 
 				if (!this.isLoadingCoverArt) {
 					this.isLoadingCoverArt = true;
-					// Fire and forget
 					this.loadCoverArtColor(coverUrl).catch(err => {
 						console.error("[reactivo] Error loading cover art:", err);
 						this.cachedVignetteColour = "255, 255, 255";
@@ -606,7 +584,6 @@ export class AudioVisualiser implements AudioVisualiserAPI {
 		}
 
 		const vignetteColour = this.cachedVignetteColour;
-		// console.log("[reactivo] Using vignette colour:", vignetteColour);
 
 		let vignetteBoxShadow = `
         inset 0 0 ${currentVignetteSize}px ${currentVignetteBlur}px rgba(${vignetteColour}, ${0.4 + currentIntensity * 0.6}),
@@ -618,8 +595,6 @@ export class AudioVisualiser implements AudioVisualiserAPI {
 
 		this.elements.vignette.style.boxShadow = vignetteBoxShadow;
 
-		const hue = 200 + frequency / 10;
-		// use same colour as vignette for the glow, with alpha based on intensity
 		const glowBackground = `
     radial-gradient(ellipse 140% 120% at 35% 70%,
         rgba(${vignetteColour}, ${currentIntensity * 0.35}) 0%,
@@ -636,8 +611,6 @@ export class AudioVisualiser implements AudioVisualiserAPI {
 
 	private async loadCoverArtColor(coverUrl: string): Promise<void> {
 		try {
-			// console.log("[reactivo] Fetching image via fetch API...");
-
 			const response = await fetch(coverUrl, {
 				mode: 'cors',
 				cache: 'force-cache'
@@ -650,22 +623,15 @@ export class AudioVisualiser implements AudioVisualiserAPI {
 			const blob = await response.blob();
 			const blobUrl = URL.createObjectURL(blob);
 
-			// console.log("[reactivo] Blob created, loading image...");
-
 			const tempImg = new Image();
 
 			tempImg.onload = () => {
-				// console.log("[reactivo] ✓ Image loaded from blob");
-				// console.log("[reactivo] Dimensions:", tempImg.naturalWidth, "x", tempImg.naturalHeight);
-
 				try {
 					const colour = retrieveCoverArtVibrant(tempImg) as any;
 
 					if (colour && colour !== "255, 255, 255") {
-						// console.log("[reactivo] ✓ Extracted vibrant color:", colour);
 						this.cachedVignetteColour = colour;
 					} else {
-						// console.warn("[reactivo] Default color returned");
 						this.cachedVignetteColour = "255, 255, 255";
 					}
 				} catch (error) {
@@ -684,24 +650,18 @@ export class AudioVisualiser implements AudioVisualiserAPI {
 				this.isLoadingCoverArt = false;
 			};
 
-			// No need for crossOrigin with blob URLs
 			tempImg.src = blobUrl;
 
 		} catch (error) {
 			console.error("[reactivo] Fetch error:", error);
 
-			console.log("[reactivo] Trying direct load without CORS...");
-
 			const tempImg = new Image();
 
 			tempImg.onload = async () => {
-				console.log("[reactivo] ✓ Direct load successful (but may fail on getImageData)");
-
 				try {
 					const colour = await retrieveCoverArtVibrant(tempImg);
 
 					if (colour && colour !== "255, 255, 255") {
-						console.log("[reactivo] ✓ Color extracted:", colour);
 						this.cachedVignetteColour = colour;
 					} else {
 						this.cachedVignetteColour = "255, 255, 255";
@@ -724,6 +684,7 @@ export class AudioVisualiser implements AudioVisualiserAPI {
 		}
 	}
 
+	// Public API
 	public disconnect(): void {
 		if (this.reconnectTimeout) {
 			clearTimeout(this.reconnectTimeout);

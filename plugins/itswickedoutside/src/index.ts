@@ -1,48 +1,6 @@
-/*
-Le caes a todos bien
-Todos te ríen la gracia
-Tienes un gesto extraño
-A mí no me engañas
-
-Así que eres humilde
-Teniendo un barco en casa
-Arqueaste la ceja
-Porque por mí no pasas
-
-No me mola tu forma de hablar
-No me fío
-No me importa dónde quieres llegar
-No me fío
-
-Estás usando tu control mental
-Quieres hacerme el lío
-No me trago tu juego emocional
-No me fío
-
-No creías tan pronto
-Verte así destapado
-Conmigo no sirve eso
-De hacerte el colocado
-
-Tranquilo, no diré nada
-Me la sudan tus juegos
-Solo mantén la distancia
-Y no me rompas los huevo
-
-No me mola tu forma de hablar
-No me fío
-No me importa dónde quieres llegar
-No me fío
-
-Estás usando tu control mental
-Quieres hacerme el lío
-No me trago tu juego emocional
-No me fío
-*/
-
 import { LunaUnload, Tracer } from "@luna/core";
 import { MediaItem, redux } from "@luna/lib";
-import { GetNPView, getFeatureFlag, setFeatureFlag } from "./ui-interface";
+import { GetNPView, getFeatureFlag } from "./ui-interface";
 
 import createAudioVisualiser, { AudioVisualiserAPI } from "./giragira";
 import { DataStoreService } from "./Settings";
@@ -51,7 +9,7 @@ export { Settings } from "./Settings";
 export const { trace, errSignal } = Tracer("[reactivo]");
 export const unloads = new Set<LunaUnload>();
 
-// Instances (initially null)
+// Global state
 let visualiser: AudioVisualiserAPI | null = null;
 export let availableDevices: any[] = [];
 export let currentDevice: string = "";
@@ -61,20 +19,7 @@ export let dynamicLerpEnabled: boolean = true;
 export let dynamicIntensityEnabled: boolean = false;
 export let dynamicCoverColour: boolean = false;
 
-const fixbozoplayer = (): void => {
-	// const name: string = "player-market-ui";
-	// const fflagState: boolean | null = getFeatureFlag(name);
-	// if (fflagState === true) {
-	// 	console.log("new player fflag detected, rolling back...");
-	// 	try {
-	// 		setFeatureFlag(name, false);
-	// 		console.log("apparently fixed");
-	// 	} catch (error) {
-	// 		console.error("Error fixing bozo player:", error);
-	// 	}
-	// }
-};
-
+// Utility functions
 async function sendAnalytics(event: string, extraData?: any) {
 	const ANALYTICS_URL = "https://reactivo.excelzzz.workers.dev/";
 
@@ -94,24 +39,8 @@ async function sendAnalytics(event: string, extraData?: any) {
 	}
 }
 
-/**
-* Initialises or reinitialises the visualiser
-*/
+// Core visualiser functions
 const initVisualiser = (): void => {
-	// const { flags, userOverrides } = redux.store.getState().featureFlags;
-
-	// console.log("=== Feature Flags ===");
-
-	// for (const [flagName, flag] of Object.entries(flags) as [string, redux.FeatureFlag][]) {
-	// 	const userValue = flagName in userOverrides ? userOverrides[flagName] : null;
-	// 	const currentValue = userValue !== null ? userValue : flag.value;
-	// 	const hasOverride = userValue !== null ? " (overridden)" : "";
-
-	// 	console.log(`${flagName}: ${currentValue}${hasOverride}`);
-	// }
-
-	fixbozoplayer();
-
 	if (DataStoreService.isFirstRan === false) {
 		try {
 			window.open(
@@ -119,13 +48,11 @@ const initVisualiser = (): void => {
 			);
 		} catch (e) { }
 		DataStoreService.isFirstRan = true;
-	} else {
-		console.log("[reactivo] installation screen skipped");
-	}
-	try {
-		// Just
-		fixbozoplayer();
+	} // else {
+	// 	console.log("[reactivo] installation screen skipped");
+	// }
 
+	try {
 		// Clean up previous instance if it exists
 		if (visualiser) {
 			visualiser.disconnect();
@@ -156,9 +83,6 @@ const initVisualiser = (): void => {
 	}
 };
 
-/**
-* Ensures visualiser is connected, reconnects if necessary
-*/
 const ensureVisualiserConnected = (): void => {
 	if (!visualiser) {
 		initVisualiser();
@@ -170,9 +94,6 @@ const ensureVisualiserConnected = (): void => {
 	}
 };
 
-/**
-* Initialises visualiser when DOM is ready
-*/
 const initWhenReady = (): void => {
 	sendAnalytics("plugin_opened");
 
@@ -183,22 +104,14 @@ const initWhenReady = (): void => {
 	}
 };
 
-// Start initialisation
-initWhenReady();
-
+// Event handlers
 redux.intercept("view/ENTERED_NOWPLAYING", unloads, function () {
-	// analytics here!
-
 	if (!visualiser) {
 		initVisualiser();
 	} else {
 		visualiser.reconnect();
-		if (visualiser.isConnected()) {
-			console.log("[reactivo] reconnected successfully");
-		}
 	}
 	visualiser?.togglePause(true);
-	console.log("npview enter");
 });
 
 redux.intercept("view/EXITED_NOWPLAYING", unloads, function () {
@@ -206,14 +119,11 @@ redux.intercept("view/EXITED_NOWPLAYING", unloads, function () {
 	visualiser?.disconnect();
 	visualiser?.destroy();
 	visualiser = null;
-	console.log("npview exit");
 });
 
 redux.intercept("player/SET_ACTIVE_DEVICE_SUCCESS", unloads, function (x: any) {
 	if (Array.isArray(availableDevices) && availableDevices.length === 0) {
-		console.log(
-			"[reactivo] No available devices, forcing the redux to set again the thingaling bleh",
-		);
+		console.log("[reactivo] No available devices, trying the redux to get the devices again...");
 	}
 
 	if (Array.isArray(availableDevices)) {
@@ -231,25 +141,11 @@ redux.intercept("player/SET_ACTIVE_DEVICE_SUCCESS", unloads, function (x: any) {
 	}
 });
 
-unloads.add(() => {
-	if (visualiser) {
-		try {
-			visualiser.disconnect();
-			visualiser.destroy();
-		} catch (error) {
-			console.error("Error destroying visualiser:", error);
-		} finally {
-			visualiser = null;
-		}
-	}
-});
-
-MediaItem.onMediaTransition(unloads, async (mediaItem: MediaItem) => {
+MediaItem.onMediaTransition(unloads, (mediaItem: MediaItem) => {
 	if (!mediaItem) {
 		if (visualiser) {
 			visualiser.disconnect();
 		}
-
 		return;
 	}
 
@@ -266,7 +162,7 @@ MediaItem.onMediaTransition(unloads, async (mediaItem: MediaItem) => {
 	}
 });
 
-// UI / settings hooks
+// Settings handlers
 export function setVignetteIntensity(value: number) {
 	vignetteIntensity = value;
 	if (visualiser && typeof visualiser.setIntensityMultiplier === "function") {
@@ -297,5 +193,22 @@ export function setDynamicColourArt(enabled: boolean) {
 		visualiser.setDynamicColour(enabled);
 	}
 }
+
+// Cleanup
+unloads.add(() => {
+	if (visualiser) {
+		try {
+			visualiser.disconnect();
+			visualiser.destroy();
+		} catch (error) {
+			console.error("Error destroying visualiser:", error);
+		} finally {
+			visualiser = null;
+		}
+	}
+});
+
+// Initialization
+initWhenReady();
 
 export { initVisualiser, ensureVisualiserConnected };
