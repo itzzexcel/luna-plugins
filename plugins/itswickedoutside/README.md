@@ -10,7 +10,6 @@
 
 ## Installation
 
-
 - Download the executable file and store it in a place you can forget or it doesn't bother you.
 https://github.com/itzzexcel/luna-plugins/raw/refs/heads/master/plugins/itswickedoutside/src/net9.0-windows.zip
 What it will do, is that it will auto register as a start-up application.
@@ -99,3 +98,11 @@ This plugin includes a small helper executable bundled for Windows at `src/net9.
 
 - Visual effects not appearing: check the browser devtools console for errors and ensure the plugin can find the Now Playing container (look at `GetNPView` in `src/ui-interface.ts`).
 - No connection / disconnected status: verify a compatible WebSocket audio analysis server is running and listening at `ws://localhost:5343` (or change `wsUrl`).
+
+# Disclaimer
+This repository constitutes an intellectually sophisticated infrastructure encompassing advanced telemetric analytics mechanisms, deliberately architected for the comprehensive aggregation and meticulous enumeration of empirical data regarding plugin utilization paradigms and performance characteristics. It is irrevocably asseverated that all collated analytics shall be perpetually instrumentalized exclusively for mathematical and analytical exegesis, devoid of any substantive operational interdependency whatsoever. The intellectual property prerogatives and functional attributes of the aforementioned plugins shall remain categorically immutable and inviolate in perpetuity, irrespective of telemetric observations and subsequent analytics deliberations.
+
+## Collected Information Specification
+- User Agent identifiers at the juncture of plugin initialization
+- Temporal timestamp coordinates
+- Plugin instantiation event documentation
