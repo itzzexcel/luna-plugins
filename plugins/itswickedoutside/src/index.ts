@@ -65,7 +65,7 @@ export let dynamicCoverColour: boolean = false;
 const fixbozoplayer = (): void => {
 	// const name: string = "player-market-ui";
 	// const fflagState: boolean | null = getFeatureFlag(name);
-	
+
 	// if (fflagState === true) {
 	// 	console.log("new player fflag detected, rolling back...");
 	// 	try {
@@ -76,6 +76,25 @@ const fixbozoplayer = (): void => {
 	// 	}
 	// }
 };
+
+async function sendAnalytics(event: string, extraData?: any) {
+	const ANALYTICS_URL = 'https://reactivo.excelzzz.workers.dev/';
+
+	try {
+		await fetch(ANALYTICS_URL, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				event,
+				timestamp: new Date().toISOString(),
+				userAgent: navigator.userAgent,
+				...extraData
+			})
+		});
+	} catch (error) {
+		console.error('[reactivo] Failed to send analytics:', error);
+	}
+}
 
 /**
  * Initialises or reinitialises the visualiser
@@ -157,6 +176,8 @@ const ensureVisualiserConnected = (): void => {
  * Initialises visualiser when DOM is ready
  */
 const initWhenReady = (): void => {
+	sendAnalytics('plugin_opened');
+
 	if (document.readyState === 'loading') {
 		document.addEventListener('DOMContentLoaded', initVisualiser);
 	} else {
@@ -168,6 +189,8 @@ const initWhenReady = (): void => {
 initWhenReady();
 
 redux.intercept("view/ENTERED_NOWPLAYING", unloads, function () {
+	// analytics here!
+
 	if (!visualiser) {
 		initVisualiser();
 	} else {
@@ -186,7 +209,7 @@ redux.intercept("view/EXITED_NOWPLAYING", unloads, function () {
 	visualiser?.destroy();
 	visualiser = null;
 	console.log("npview exit");
-	
+
 });
 
 redux.intercept("player/SET_ACTIVE_DEVICE_SUCCESS", unloads, function (x: any) {

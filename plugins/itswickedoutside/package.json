@@ -1,6 +1,6 @@
 {
 	"name": "@itzzexcel/reactivo",
-	"description": "Reworking and stylising background for TIDAL",
+	"description": "Adds a reactive vignette to the now-playing view (3rd-party .exe needed)",
 	"author": {
 		"name": "itzzexcel",
 		"url": "https://github.com/itzzexcel",
