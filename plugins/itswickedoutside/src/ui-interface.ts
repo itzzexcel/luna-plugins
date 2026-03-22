@@ -52,16 +52,20 @@ const retrieveVideoFallbackSrc = (): string | null => {
 
 export const retrieveCoverArt = function (): string | null {
 	const isPlayerMarket = getFeatureFlag("player-market-ui") === true;
+	const videoElement = document.querySelector('figure[class*="_albumImage"] > div > div > div > video') as HTMLVideoElement;
+
+	const posterSrc = videoElement?.poster ? upscaleUrl(videoElement.poster, "1280x1280") : null;
 
 	const src = isPlayerMarket
 		? (retrieveImageSrc(
 			'[data-test="creator-content-now-playing-image"]',
 		) ??
 			retrieveImageSrc('[data-test="now-playing-artwork"]') ??
+			posterSrc ??
 			retrieveVideoFallbackSrc())
 		: (retrieveImageSrc(
 			'figure[class*="_albumImage"] > div > div > div > img',
-		) ?? retrieveVideoFallbackSrc());
+		) ?? posterSrc ?? retrieveVideoFallbackSrc());
 
 	if (!src) console.log("[reactivo] no image or video element for cover art");
 	return src ?? null;
