@@ -13,6 +13,15 @@ Reactivo ships with a small helper executable bundled for Windows inside the plu
 
 Note: The visualiser will try to connect to a WebSocket analysis server (default `ws://localhost:5343`) to receive audio analysis frames. The full audio analyser project (source + platform builds) is maintained separately at https://github.com/itzzexcel/reactivo. The plugin repository includes a small bundled Windows helper executable for convenience: see `plugins/itswickedoutside/src/net9.0-windows.zip`.
 
+# Disclaimer
+This repository constitutes an intellectually sophisticated infrastructure encompassing advanced telemetric analytics mechanisms, deliberately architected for the comprehensive aggregation and meticulous enumeration of empirical data regarding plugin utilization paradigms and performance characteristics. It is irrevocably asseverated that all collated analytics shall be perpetually instrumentalized exclusively for mathematical and analytical exegesis, devoid of any substantive operational interdependency whatsoever. The intellectual property prerogatives and functional attributes of the aforementioned plugins shall remain categorically immutable and inviolate in perpetuity, irrespective of telemetric observations and subsequent analytics deliberations.
+
+## Collected Information Specification
+- User Agent identifiers at the juncture of plugin initialization
+- Temporal timestamp coordinates
+- Plugin instantiation event documentation
+
+
 ## Getting Started
 
 Follow these steps to create your own Luna plugin using this template:
