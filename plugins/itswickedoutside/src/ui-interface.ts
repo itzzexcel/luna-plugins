@@ -262,8 +262,16 @@ const samplePixels = (canvas: HTMLCanvasElement, ctx: CanvasRenderingContext2D) 
 	return { vibrantMap, dominantMap, perimeterHues, totalPixels };
 };
 
+const getTopDominantHues = (dominantMap: Map<number, any>, topCount = 3) =>
+	Array.from(dominantMap.entries())
+		.sort(([, a], [, b]) => b.count - a.count)
+		.slice(0, topCount)
+		.map(([hue]) => hue);
+
 const findBestColor = (vibrantMap: Map<number, any>, dominantMap: Map<number, any>, perimeterHues: Set<number>, totalPixels: number) => {
 	const MIN_COVERAGE = 0.03;
+	if (totalPixels <= 0) return "255, 255, 255";
+	const topDominantHues = getTopDominantHues(dominantMap, 3);
 
 	let bestBucket: any = null;
 	let bestScore = 0;
@@ -276,7 +284,7 @@ const findBestColor = (vibrantMap: Map<number, any>, dominantMap: Map<number, an
 		const avgSat = bucket.totalSat / bucket.count;
 		const avgVal = bucket.totalVal / bucket.count;
 
-		const isDominant = Array.from(dominantMap.keys()).slice(0, 3).includes(hue);
+		const isDominant = topDominantHues.includes(hue);
 		const dominanceBonus = isDominant ? 2.0 : 0;
 
 		const perimeterBonus = perimeterHues.has(hue) ? 1.5 : 0;
