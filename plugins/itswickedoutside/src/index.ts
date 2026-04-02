@@ -75,7 +75,7 @@ const initVisualiser = (): void => {
 			useDynamicLerp: dynamicLerpEnabled,
 			useDynamicIntensity: dynamicIntensityEnabled,
 			useDynamicColour: dynamicCoverColour,
-			zIndex: getFeatureFlag("player-market-ui") ? 0 : -1,
+			zIndex: 0,
 		});
 	} catch (error) {
 		console.error("Failed to initialize visualiser:", error);

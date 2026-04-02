@@ -7,7 +7,7 @@ const isNPViewHidden = (el: HTMLElement) =>
 	el.className.includes("_nowPlayingHidden");
 
 export const GetNPView = function (): HTMLElement {
-	const isPlayerMarket = getFeatureFlag("player-market-ui") === true;
+	const isPlayerMarket = true; // getFeatureFlag("player-market-ui") === true;
 
 	const selectors = isPlayerMarket
 		? ['section[class*="_nowPlayingContainer"]']
@@ -51,7 +51,7 @@ const retrieveVideoFallbackSrc = (): string | null => {
 };
 
 export const retrieveCoverArt = function (): string | null {
-	const isPlayerMarket = getFeatureFlag("player-market-ui") === true;
+	const isPlayerMarket = true; //getFeatureFlag("player-market-ui") === true;
 	const videoElement = document.querySelector('figure[class*="_albumImage"] > div > div > div > video') as HTMLVideoElement;
 
 	const posterSrc = videoElement?.poster ? upscaleUrl(videoElement.poster, "1280x1280") : null;
