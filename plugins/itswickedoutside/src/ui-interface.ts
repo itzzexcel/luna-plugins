@@ -137,6 +137,166 @@ const hsvToRgb = (h: number, s: number, v: number) => {
 	};
 };
 
+const clamp = (value: number, min: number, max: number) => Math.min(Math.max(value, min), max);
+
+const parseRgbString = (rgb: string): { r: number; g: number; b: number } | null => {
+	const match = rgb.match(/rgb\s*\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)/i);
+	if (!match) return null;
+	return {
+		r: Number(match[1]),
+		g: Number(match[2]),
+		b: Number(match[3]),
+	};
+};
+
+const softenColor = (rgb: string, saturationFactor = 0.72, valueFactor = 0.92): string => {
+	const parsed = parseRgbString(rgb);
+	if (!parsed) return rgb;
+	const hsv = rgbToHsv(parsed.r, parsed.g, parsed.b);
+	const softened = hsvToRgb(
+		hsv.h,
+		clamp(hsv.s * saturationFactor, 0, 1),
+		clamp(hsv.v * valueFactor, 0, 1),
+	);
+	return `rgb(${softened.r}, ${softened.g}, ${softened.b})`;
+};
+
+const scoreVibrantColor = (rgb: string) => {
+	const parsed = parseRgbString(rgb);
+	if (!parsed) return 0;
+	const { s, v } = rgbToHsv(parsed.r, parsed.g, parsed.b);
+	if (s < 0.08 || v < 0.18 || v > 0.96) return 0;
+	return s * 0.72 + v * 0.22 + (1 - Math.abs(0.5 - v)) * 0.06;
+};
+
+const scorePalette = (palette: string[]) => {
+	const buckets = palette
+		.map(parseRgbString)
+		.filter(Boolean) as Array<{ r: number; g: number; b: number }>;
+	if (buckets.length === 0) {
+		return { score: 0, count: 0, diversity: 0 };
+	}
+
+	let totalQuality = 0;
+	let saturatedCount = 0;
+	const hueGroups = new Set<number>();
+
+	for (const bucket of buckets) {
+		const { h, s, v } = rgbToHsv(bucket.r, bucket.g, bucket.b);
+		totalQuality += s * 0.6 + v * 0.3;
+		if (s >= 0.36) saturatedCount++;
+		hueGroups.add(Math.round(h / 45));
+	}
+
+	const averageQuality = totalQuality / buckets.length;
+	const diversity = hueGroups.size / Math.min(buckets.length, 6);
+	const saturationBonus = saturatedCount / buckets.length;
+	const score = averageQuality * 0.55 + saturationBonus * 0.25 + diversity * 0.2;
+
+	return { score, count: buckets.length, diversity };
+};
+
+const isMostlyDarkCover = (vibrantColor: string, palette: string[]) => {
+	const vibrantRgb = parseRgbString(vibrantColor);
+	if (!vibrantRgb) return false;
+	const vibrantV = rgbToHsv(vibrantRgb.r, vibrantRgb.g, vibrantRgb.b).v;
+
+	const paletteVals = palette
+		.map(parseRgbString)
+		.filter((rgb): rgb is { r: number; g: number; b: number } => rgb !== null)
+		.map((rgb) => rgbToHsv(rgb.r, rgb.g, rgb.b).v);
+
+	if (paletteVals.length === 0) {
+		return vibrantV < 0.22;
+	}
+
+	const averagePaletteV = paletteVals.reduce((sum, v) => sum + v, 0) / paletteVals.length;
+	const darkCount = paletteVals.filter((v) => v < 0.24).length;
+	return vibrantV < 0.22 && averagePaletteV < 0.26 && darkCount / paletteVals.length > 0.66;
+};
+
+const buildVibrantPalette = (base: string, maxColors: number) => {
+	const parsed = parseRgbString(base);
+	if (!parsed) return [base];
+	const baseHsv = rgbToHsv(parsed.r, parsed.g, parsed.b);
+	const variations = [
+		{ saturation: baseHsv.s, value: baseHsv.v },
+		{ saturation: clamp(baseHsv.s * 0.82, 0.18, 1), value: clamp(baseHsv.v * 0.94, 0.18, 0.98) },
+		{ saturation: clamp(baseHsv.s * 0.72, 0.18, 1), value: clamp(baseHsv.v * 0.86, 0.18, 0.96) },
+		{ saturation: clamp(baseHsv.s * 0.62, 0.18, 1), value: clamp(baseHsv.v * 0.74, 0.18, 0.92) },
+		{ saturation: clamp(baseHsv.s * 0.52, 0.18, 1), value: clamp(baseHsv.v * 0.82, 0.18, 0.98) },
+	];
+
+	return Array.from(
+		new Set(
+			variations
+				.slice(0, maxColors)
+				.map(({ saturation, value }) => {
+					const rgb = hsvToRgb(baseHsv.h, saturation, value);
+					return `rgb(${rgb.r}, ${rgb.g}, ${rgb.b})`;
+				}),
+		),
+	).slice(0, maxColors);
+};
+
+export function retrieveCoverArtColors(
+	imageElement: HTMLImageElement,
+	maxColors = 7,
+) {
+	const vibrantColor = retrieveCoverArtVibrant(imageElement);
+	const palette = retrieveCoverArtPalette(imageElement, maxColors);
+
+	if (isMostlyDarkCover(vibrantColor, palette)) {
+		const mutedPalette = palette
+			.slice(0, 2)
+			.map((color) => {
+				const parsed = parseRgbString(color);
+				if (!parsed) return color;
+				const { h, s, v } = rgbToHsv(parsed.r, parsed.g, parsed.b);
+				const mutedS = clamp(s * 0.24 + 0.05, 0, 0.5);
+				const mutedV = clamp(v * 1.05, 0, 0.34);
+				const mutedRgb = hsvToRgb(h, mutedS, mutedV);
+				return `rgb(${mutedRgb.r}, ${mutedRgb.g}, ${mutedRgb.b})`;
+			})
+			.filter(Boolean) as string[];
+
+		return {
+			colour: vibrantColor,
+			palette: mutedPalette.length > 0 ? mutedPalette : [vibrantColor],
+			source: 'dark',
+		};
+	}
+
+	const paletteMetrics = scorePalette(palette);
+	const vibrantScore = scoreVibrantColor(vibrantColor);
+	const useVibrant = vibrantScore > paletteMetrics.score + 0.12 || paletteMetrics.count < 3;
+
+	let chosenPalette = palette;
+	let source: 'palette' | 'vibrant' | 'mixed' = 'palette';
+
+	if (useVibrant) {
+		source = 'vibrant';
+		chosenPalette = buildVibrantPalette(vibrantColor, maxColors);
+		if (paletteMetrics.count > 0 && paletteMetrics.score > 0.25) {
+			source = 'mixed';
+			chosenPalette = Array.from(new Set([vibrantColor, ...palette])).slice(0, maxColors);
+		}
+	} else if (palette.length < 3) {
+		source = 'mixed';
+		chosenPalette = Array.from(new Set([vibrantColor, ...palette])).slice(0, maxColors);
+	}
+
+	if (chosenPalette.length === 0) {
+		chosenPalette = [vibrantColor];
+	}
+
+	return {
+		colour: vibrantColor,
+		palette: chosenPalette,
+		source,
+	};
+};
+
 const prepareCanvas = (imageElement: HTMLImageElement) => {
 	const canvas = document.createElement("canvas");
 	let canvasWidth = imageElement.naturalWidth || imageElement.width;
@@ -329,10 +489,10 @@ const findBestColor = (vibrantMap: Map<number, any>, dominantMap: Map<number, an
 	let finalB = Math.round(bestBucket.b / bestBucket.count);
 
 	const finalHsv = rgbToHsv(finalR, finalG, finalB);
-	const boostedSat = Math.min(finalHsv.s * 1.35, 1);
+	const boostedSat = Math.min(finalHsv.s * 0.92, 0.86);
 
-	const valBoost = finalHsv.v < 0.4 ? 1.75 : 1.15;
-	const boostedVal = Math.min(finalHsv.v * valBoost, 1);
+	const valBoost = finalHsv.v < 0.28 ? 1.4 : finalHsv.v < 0.6 ? 1.02 : finalHsv.v < 0.85 ? 0.98 : 0.9;
+	const boostedVal = Math.min(finalHsv.v * valBoost, 0.9);
 
 	const boosted = hsvToRgb(finalHsv.h, boostedSat, boostedVal);
 	finalR = boosted.r;
@@ -350,6 +510,73 @@ export function retrieveCoverArtVibrant(imageElement: HTMLImageElement): string 
 	const { vibrantMap, dominantMap, perimeterHues, totalPixels } = samplePixels(canvas, ctx);
 
 	return findBestColor(vibrantMap, dominantMap, perimeterHues, totalPixels);
+}
+
+export function retrieveCoverArtPalette(
+	imageElement: HTMLImageElement,
+	maxColors = 7,
+): string[] {
+	const canvasData = prepareCanvas(imageElement);
+	if (!canvasData) return ["rgb(255, 255, 255)"];
+
+	const { canvas, ctx } = canvasData;
+	const { vibrantMap, dominantMap, totalPixels } = samplePixels(canvas, ctx);
+	if (totalPixels <= 0) return ["rgb(255, 255, 255)"];
+
+	const vibrantBuckets = Array.from(vibrantMap.values())
+		.map((bucket) => {
+			const avgR = Math.round(bucket.r / bucket.count);
+			const avgG = Math.round(bucket.g / bucket.count);
+			const avgB = Math.round(bucket.b / bucket.count);
+			const avgSat = bucket.totalSat / bucket.count;
+			const avgVal = bucket.totalVal / bucket.count;
+			return {
+				avgR,
+				avgG,
+				avgB,
+				avgSat,
+				avgVal,
+				coverage: bucket.count / totalPixels,
+			};
+		})
+		.filter((bucket) => bucket.coverage >= 0.01)
+		.filter(
+			(bucket) =>
+				!(bucket.avgR < 20 && bucket.avgG < 20 && bucket.avgB < 20),
+		)
+		.sort((a, b) => {
+			const scoreA = a.avgSat * 2.5 + a.avgVal * 1.2 + a.coverage * 2.0;
+			const scoreB = b.avgSat * 2.5 + b.avgVal * 1.2 + b.coverage * 2.0;
+			return scoreB - scoreA;
+		});
+
+	const colors = vibrantBuckets
+		.slice(0, maxColors)
+		.map((bucket) => {
+			const { avgR, avgG, avgB } = bucket;
+			const hsv = rgbToHsv(avgR, avgG, avgB);
+			if (hsv.v > 0.9) {
+				const toned = hsvToRgb(hsv.h, Math.min(hsv.s * 0.95, 1), 0.9);
+				return `rgb(${toned.r}, ${toned.g}, ${toned.b})`;
+			}
+			return `rgb(${avgR}, ${avgG}, ${avgB})`;
+		});
+
+	if (colors.length > 0) {
+		return colors.map((color) => softenColor(color, 0.78, 0.95));
+	}
+
+	const fallback = Array.from(dominantMap.values())
+		.sort((a, b) => b.count - a.count)
+		.slice(0, maxColors)
+		.map((bucket) => {
+			const avgR = Math.round(bucket.r / bucket.count);
+			const avgG = Math.round(bucket.g / bucket.count);
+			const avgB = Math.round(bucket.b / bucket.count);
+			return softenColor(`rgb(${avgR}, ${avgG}, ${avgB})`, 0.78, 0.95);
+		});
+
+	return fallback.length > 0 ? fallback : ["rgb(255, 255, 255)"];
 }
 
 export const bruh = <T>(obj: T): T => {

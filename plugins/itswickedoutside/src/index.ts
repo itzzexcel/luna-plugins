@@ -18,6 +18,9 @@ export let vignetteIntensity: number = DataStoreService.vignetteIntensity;
 export let dynamicLerpEnabled: boolean = true;
 export let dynamicIntensityEnabled: boolean = false;
 export let dynamicCoverColour: boolean = false;
+export let enhancedBackgroundEnabled: boolean = DataStoreService.enhancedBackgroundEnabled;
+export let backgroundMode: 'circles' | 'images' =
+	(DataStoreService.backgroundMode as 'circles' | 'images') || 'circles';
 
 // Utility functions
 async function sendAnalytics(event: string, extraData?: any) {
@@ -75,6 +78,8 @@ const initVisualiser = (): void => {
 			useDynamicLerp: dynamicLerpEnabled,
 			useDynamicIntensity: dynamicIntensityEnabled,
 			useDynamicColour: dynamicCoverColour,
+			useEnhancedBackground: enhancedBackgroundEnabled,
+			backgroundMode,
 			zIndex: 0,
 		});
 	} catch (error) {
@@ -124,6 +129,8 @@ redux.intercept("view/EXITED_NOWPLAYING", unloads, function () {
 redux.intercept("player/SET_ACTIVE_DEVICE_SUCCESS", unloads, function (x: any) {
 	if (Array.isArray(availableDevices) && availableDevices.length === 0) {
 		console.log("[reactivo] No available devices, trying the redux to get the devices again...");
+		redux.actions["remotePlayback/REFRESH_DEVICES"]();
+		return;
 	}
 
 	if (Array.isArray(availableDevices)) {
@@ -191,6 +198,20 @@ export function setDynamicColourArt(enabled: boolean) {
 	dynamicCoverColour = enabled;
 	if (visualiser && typeof visualiser.setDynamicColour === "function") {
 		visualiser.setDynamicColour(enabled);
+	}
+}
+
+export function setEnhancedBackground(enabled: boolean) {
+	enhancedBackgroundEnabled = enabled;
+	if (visualiser && typeof visualiser.setEnhancedBackground === "function") {
+		visualiser.setEnhancedBackground(enabled);
+	}
+}
+
+export function setBackgroundMode(mode: 'circles' | 'images') {
+	backgroundMode = mode;
+	if (visualiser && typeof visualiser.setBackgroundMode === "function") {
+		visualiser.setBackgroundMode(mode);
 	}
 }
 

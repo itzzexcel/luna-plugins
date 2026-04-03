@@ -11,6 +11,8 @@ import {
 	setDynamicLerpEnabled,
 	setDynamicIntensityEnabled,
 	setDynamicColourArt,
+	setEnhancedBackground,
+	setBackgroundMode,
 } from ".";
 import { ReactiveStore } from "@luna/core";
 
@@ -34,6 +36,8 @@ export const DataStoreService = await ReactiveStore.getPluginStorage(
 		dynamicLerpEnabled: true,
 		dynamicIntensityEnabled: false,
 		vignetteUsesArtworkColourEnabled: true,
+		enhancedBackgroundEnabled: false,
+		backgroundMode: 'circles',
 		isFirstRan: false,
 	},
 );
@@ -50,6 +54,14 @@ export const Settings = () => {
 	const [artworkColourVignette, setArtVignetteChange] =
 		React.useState<boolean>(
 			DataStoreService.vignetteUsesArtworkColourEnabled,
+		);
+	const [enhancedBackgroundEnabled, setEnhancedBackgroundState] =
+		React.useState<boolean>(
+			DataStoreService.enhancedBackgroundEnabled,
+		);
+	const [backgroundMode, setBackgroundModeState] =
+		React.useState<'circles' | 'images'>(
+			(DataStoreService.backgroundMode as 'circles' | 'images') || 'circles',
 		);
 
 	const onIntensityChange = React.useCallback((val?: any) => {
@@ -92,6 +104,32 @@ export const Settings = () => {
 		[],
 	);
 
+	const onEnhancedBackgroundChange = React.useCallback(
+		(_: unknown, checked?: boolean) => {
+			DataStoreService.enhancedBackgroundEnabled = !!checked;
+			setEnhancedBackgroundState(
+				DataStoreService.enhancedBackgroundEnabled,
+			);
+			setEnhancedBackground(
+				DataStoreService.enhancedBackgroundEnabled,
+			);
+		},
+		[],
+	);
+
+	const onBackgroundModeChange = React.useCallback(
+		(_: unknown, checked?: boolean) => {
+			DataStoreService.backgroundMode = checked ? 'images' : 'circles';
+			setBackgroundModeState(
+				DataStoreService.backgroundMode as 'circles' | 'images',
+			);
+			setBackgroundMode(
+				DataStoreService.backgroundMode as 'circles' | 'images',
+			);
+		},
+		[],
+	);
+
 	return (
 		<LunaSettings>
 			<LunaNumberSetting
@@ -104,22 +142,37 @@ export const Settings = () => {
 				onNumber={onIntensityChange}
 			/>
 			<AnySwitch
-				title="Dynamic Lerp"
-				checked={dynamic}
-				desc="Enable BPM-driven lerp adjustments"
-				onChange={onDynamicChange}
-			/>
-			<AnySwitch
 				title="Dynamic Intensity (WIP)"
 				checked={dynamicIntensity}
 				desc="Scales intensity based on audio content (works better with low-bass songs)"
 				onChange={onDynamicIntensityChange}
 			/>
+
+			<AnySwitch
+				title="Dynamic Lerp"
+				checked={dynamic}
+				desc="Enable BPM-driven lerp adjustments"
+				onChange={onDynamicChange}
+			/>
+
 			<AnySwitch
 				title="Vignette Colour uses Artwork Colours"
 				checked={artworkColourVignette}
 				desc="Changes the vignette colour to the most vibrant colour of the currently playing song artwork."
 				onChange={onArtVignetteChange}
+			/>
+
+			<AnySwitch
+				title="Enhanced Background"
+				checked={enhancedBackgroundEnabled}
+				desc="Create large blurred circles from the cover art palette behind the visualiser."
+				onChange={onEnhancedBackgroundChange}
+			/>
+			<AnySwitch
+				title="Use cover images for background"
+				checked={backgroundMode === 'images'}
+				desc="Use distorted album artwork fragments instead of plain gradient blobs."
+				onChange={onBackgroundModeChange}
 			/>
 		</LunaSettings>
 	);
