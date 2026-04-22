@@ -349,7 +349,7 @@ button[data-test="close-now-playing"]:hover {
     top: calc(var(--headerHeight) + 80px);
 }
 
-[data-test="media-table"] > div > div {
+[data-test="media-table"] > div {
     backdrop-filter: blur(calc(15vh)) saturate(4) brightness(1);
     background-image: var(--img) !important;
     border-radius: 8px;
