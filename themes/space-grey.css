@@ -651,7 +651,10 @@ div:has(> [class*="_profilePictureWithName"], > [data-test="beta-features-row-jo
     border: var(--wave-color-opacity-contrast-fill-ultra-thin) solid 1px;
     border-radius: 3px !important;
 }
+<<<<<<< HEAD
 
 .rl-wbw-word, .rl-wbw-word {
     text-transform: lowercase !important;
 }
+=======
+>>>>>>> 2d1e3bbd95c7ae3990afa1cc70f5fc93ed353a19
