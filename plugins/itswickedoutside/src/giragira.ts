@@ -1,6 +1,7 @@
 /**
-* Audio Visualiser Module
-*/
+ * Gira Gira - Audio Visualiser
+ * Turns music into smooth, adaptive visuals that respond to bass and rhythm
+ */
 
 import { currentDevice, Settings } from ".";
 import { DataStoreService } from "./Settings";
@@ -56,27 +57,115 @@ export interface AudioVisualiserAPI {
 	setBackgroundMode?: (mode: 'circles' | 'images') => void;
 }
 
+// Detects sudden bass intensity spikes for genres with dynamic bass emphasis
+class BassSpikeDetector {
+	private bassHistory: number[] = [];
+	private readonly historySize = 20; // ~1 second at 20fps
+	private spikeThreshold = 0.4; // How much above average to trigger
+	private spikeCooldown = 0; // Frames to wait before detecting another spike
+	private readonly maxCooldown = 60; // 3 seconds at 20fps
+	private currentSpikeLevel = 0;
+	private spikeDecayRate = 0.95;
+
+	addBassReading(bassIntensity: number): void {
+		// Add to history
+		this.bassHistory.push(bassIntensity);
+		if (this.bassHistory.length > this.historySize) {
+			this.bassHistory.shift();
+		}
+
+		// Update cooldown
+		if (this.spikeCooldown > 0) {
+			this.spikeCooldown--;
+		}
+
+		// Detect spike if we have enough history and cooldown is over
+		if (this.bassHistory.length >= 5 && this.spikeCooldown === 0) {
+			const recent = this.bassHistory.slice(-3); // Last 3 readings
+			const older = this.bassHistory.slice(0, -3); // Everything before that
+			
+			if (older.length > 0) {
+				const recentAvg = recent.reduce((a, b) => a + b, 0) / recent.length;
+				const olderAvg = older.reduce((a, b) => a + b, 0) / older.length;
+				
+				// Calculate how much the recent readings exceed the baseline
+				const spikeRatio = recentAvg / Math.max(olderAvg, 0.01);
+				
+				if (spikeRatio > (1 + this.spikeThreshold)) {
+					// Spike detected! Set spike level based on intensity
+					this.currentSpikeLevel = Math.min(1.0, (spikeRatio - 1) * 0.5);
+					this.spikeCooldown = this.maxCooldown;
+				}
+			}
+		}
+
+		// Decay spike level over time
+		this.currentSpikeLevel *= this.spikeDecayRate;
+	}
+
+	getSpikeMultiplier(): number {
+		// Return 1.0 + spike boost (up to 2.0x intensity)
+		return 1.0 + (this.currentSpikeLevel * 1.0);
+	}
+
+	getSpikeLevel(): number {
+		return this.currentSpikeLevel;
+	}
+
+	reset(): void {
+		this.bassHistory = [];
+		this.spikeCooldown = 0;
+		this.currentSpikeLevel = 0;
+	}
+}
+
+// Figures out how intense things should be based on the bass
 class DynamicIntensityController {
 	private smoothedEnergy: number = 0;
 	private frequencySpread: number = 0;
 	private bassPresence: number = 0;
-	private readonly smoothingFactor: number = 0.1;
+	private readonly smoothingFactor: number = 0.12;  // More responsive for fast bass changes
+	private readonly decaySmoothingFactor: number = 0.06;  // Faster decay
+	private bassSpikeDetector: BassSpikeDetector;
+
+	constructor() {
+		this.bassSpikeDetector = new BassSpikeDetector();
+	}
 
 	calculateDynamicIntensity(analysis: AudioAnalysis): number {
 		const bass = analysis.bass;
 		if (!bass) return 0;
 
-		const rawBassPresence = Math.min(bass.average * 10000, 1);
+		// Only real bass lives between 20-150Hz, everything else is just noise
+		const isRealBass = bass.frequency >= 20 && bass.frequency <= 150;
+		const bassFreqFactor = isRealBass ? 1.0 : Math.max(0, 1 - (bass.frequency - 150) / 100);
+		
+		// When we get real bass, crank it up based on how thick it feels
+		// Higher multiplier for fast-changing bass (DnB style)
+		const rawBassPresence = isRealBass 
+			? Math.min(bass.average * 18000, 1) * (1 + bass.strongest.magnitude * 4)
+			: Math.min(bass.average * 8000, 1);
+		
 		const freqSpread = Math.min(bass.frequency / 200, 1);
-		const magnitudeStrength = Math.min(bass.strongest.magnitude * 100, 1);
+		const magnitudeStrength = Math.min(bass.strongest.magnitude * 140, 1);  // More sensitive
 
-		this.bassPresence += (rawBassPresence - this.bassPresence) * this.smoothingFactor;
-		this.frequencySpread += (freqSpread - this.frequencySpread) * this.smoothingFactor;
+		// Smooth it out with momentum to prevent jittery jumps
+		const effectiveSmoothing = isRealBass ? this.smoothingFactor : this.decaySmoothingFactor;
+		this.bassPresence += (rawBassPresence - this.bassPresence) * effectiveSmoothing;
+		this.frequencySpread += (freqSpread - this.frequencySpread) * this.decaySmoothingFactor;
 
-		const dynamicIntensity =
-			this.bassPresence * 0.6 +
-			this.frequencySpread * 0.2 +
-			magnitudeStrength * 0.2;
+		// Feed bass intensity to spike detector
+		this.bassSpikeDetector.addBassReading(this.bassPresence);
+
+		// Mix it all together: bass weight matters most, frequency context a little, punch even less
+		let dynamicIntensity =
+			this.bassPresence * 0.75 +  // Increased bass weight
+			this.frequencySpread * 0.12 +
+			(magnitudeStrength * bassFreqFactor) * 0.13;
+
+		// Apply spike multiplier for sudden bass emphasis moments
+		const spikeMultiplier = this.bassSpikeDetector.getSpikeMultiplier();
+		dynamicIntensity *= spikeMultiplier;
 
 		return Math.min(dynamicIntensity, 1);
 	}
@@ -85,9 +174,11 @@ class DynamicIntensityController {
 		this.smoothedEnergy = 0;
 		this.frequencySpread = 0;
 		this.bassPresence = 0;
+		this.bassSpikeDetector.reset();
 	}
 }
 
+// Adapts smoothing based on the BPM and tempo of the track
 class DynamicLerpController {
 	private currentLerp: number = 0.5;
 	private targetLerp: number = 0.5;
@@ -95,8 +186,8 @@ class DynamicLerpController {
 
 	private config = {
 		bpmMin: 60,
-		bpmMax: 180,
-		lerpMin: 0.3,
+		bpmMax: 200,  // Extended for high-BPM genres like DnB
+		lerpMin: 0.2,  // More reactive minimum
 		lerpMax: 0.8,
 		curve: 'exponential' as 'linear' | 'exponential' | 'logarithmic'
 	};
@@ -114,7 +205,14 @@ class DynamicLerpController {
 		let curveFactor: number;
 		switch (curve) {
 			case 'exponential':
-				curveFactor = Math.pow(normalizedBPM, 1.5);
+				// For high BPM (DnB territory), become more reactive, not more smooth
+				if (normalizedBPM > 0.8) {  // BPM > 172
+					// Invert the curve for very high BPM - become more reactive
+					const highBPMFactor = (normalizedBPM - 0.8) / 0.2;  // 0 to 1 for BPM 172-200
+					curveFactor = 0.8 - highBPMFactor * 0.4;  // Drop from 0.8 to 0.4
+				} else {
+					curveFactor = Math.pow(normalizedBPM, 1.5);
+				}
 				break;
 			case 'logarithmic':
 				curveFactor = Math.log1p(normalizedBPM * 9) / Math.log(10);
@@ -139,6 +237,166 @@ class DynamicLerpController {
 
 	getCurrentLerp(): number {
 		return this.currentLerp;
+	}
+}
+
+// Learns what kind of track we're playing and adjusts behavior accordingly
+class SongAdaptationController {
+	private analysisHistory: Array<{
+		intensity: number;
+		frequency: number;
+		magnitude: number;
+		bpm: number;
+		spikeLevel: number;
+		timestamp: number;
+	}> = [];
+	
+	private readonly HISTORY_SIZE = 30; // 30 frames de historia
+	private readonly HISTORY_WINDOW_MS = 1000; // 1 segundo de ventana
+	
+	private adaptiveSmoothing: number = 0.15;
+	private energyTrend: number = 0;
+	private variability: number = 0;
+	private consistencyFactor: number = 0.5;
+	private averageBPM: number = 120;
+	private bassSpikeFrequency: number = 0; // How often bass spikes occur (0-1)
+
+	addAnalysis(analysis: AudioAnalysis, currentIntensity: number, spikeLevel: number = 0): void {
+		const now = Date.now();
+
+		this.analysisHistory.push({
+			intensity: currentIntensity,
+			frequency: analysis.bass?.frequency ?? 100,
+			magnitude: analysis.bass?.strongest.magnitude ?? 0,
+			bpm: analysis.bpm ?? 120,
+			spikeLevel: spikeLevel,
+			timestamp: now,
+		});
+
+		// Drop ancient history, keeps things responsive
+		this.analysisHistory = this.analysisHistory.filter(
+			item => now - item.timestamp < this.HISTORY_WINDOW_MS
+		);
+
+		// Keep it from growing too big in memory
+		if (this.analysisHistory.length > this.HISTORY_SIZE) {
+			this.analysisHistory.shift();
+		}
+
+		this.updateAdaptiveParameters();
+	}
+
+	private updateAdaptiveParameters(): void {
+		// Need some data before we can figure anything out
+		if (this.analysisHistory.length < 3) return;
+
+		// Check if the track's energy is ramping up or cooling down
+		const recent = this.analysisHistory.slice(-5);
+		const oldest = this.analysisHistory.slice(0, 5);
+		
+		const recentAvg = recent.reduce((sum, a) => sum + a.intensity, 0) / recent.length;
+		const oldestAvg = oldest.reduce((sum, a) => sum + a.intensity, 0) / oldest.length;
+		
+		this.energyTrend = (recentAvg - oldestAvg);
+
+		// See how much the intensity bounces around
+		const intensities = this.analysisHistory.map(a => a.intensity);
+		const mean = intensities.reduce((a, b) => a + b, 0) / intensities.length;
+		const variance = intensities.reduce((sum, val) => sum + Math.pow(val - mean, 2), 0) / intensities.length;
+		this.variability = Math.sqrt(variance);
+
+		// Steady beat like a DJ set, or all over the place like prog rock?
+		this.consistencyFactor = Math.max(0, 1 - this.variability * 2);
+
+		// Calculate average BPM for high-BPM genre detection
+		const bpms = this.analysisHistory.map(a => a.bpm);
+		this.averageBPM = bpms.reduce((a, b) => a + b, 0) / bpms.length;
+
+		// How often do bass spikes happen? (0-1 scale)
+		const spikeReadings = this.analysisHistory.map(a => a.spikeLevel);
+		const avgSpikeLevel = spikeReadings.reduce((sum, val) => sum + val, 0) / spikeReadings.length;
+		this.bassSpikeFrequency = Math.min(1, avgSpikeLevel / 0.5); // Normalize to 0-1
+
+		// Now tweak how smooth we want things to be
+		this.adaptSmoothing();
+	}
+
+	private adaptSmoothing(): void {
+		// Wild tracks need smoothing so we don't jitter
+		// Steady tracks can react faster
+		
+		const baseSmoothing = 0.15;
+		const smoothingRange = 0.12; // Range from crisp to glassy smooth
+		
+		// Locked groove? Stay snappy. All over? Get smooth
+		const variabilityInfluence = this.variability * smoothingRange;
+		
+		// Building up? Don't smooth too much. Falling off? Give it more cushion
+		const trendInfluence = Math.max(0, -this.energyTrend * 0.05);
+		
+		this.adaptiveSmoothing = Math.max(
+			0.03,
+			Math.min(0.27, baseSmoothing + variabilityInfluence + trendInfluence)
+		);
+	}
+
+	getAdaptiveSmoothing(): number {
+		return this.adaptiveSmoothing;
+	}
+
+	getConsistencyFactor(): number {
+		return this.consistencyFactor;
+	}
+
+	getVariability(): number {
+		return this.variability;
+	}
+
+	getEnergyTrend(): number {
+		return this.energyTrend;
+	}
+
+	// Different songs need different transition vibes
+	getSmoothnessFactor(): number {
+		// Wild energy swings? Make transitions dreamy
+		// Locked in? Let changes feel punchy
+		const baseSmoothness = 0.5;
+		const variabilitySmoothing = this.variability * 0.4;
+		return Math.min(0.9, baseSmoothness + variabilitySmoothing);
+	}
+
+	// Keep the intensity from getting too crazy on bouncy tracks
+	getAdaptiveIntensityMultiplier(): number {
+		// High-BPM tracks (DnB, etc.) need full intensity even with variability
+		const isHighBPM = this.averageBPM > 160;
+		
+		if (isHighBPM) {
+			// High BPM tracks get full intensity, maybe even a boost
+			let multiplier = Math.min(1.2, 1.0 + (this.averageBPM - 160) * 0.005);
+			
+			// If bass spikes are common, boost intensity even more for those moments
+			if (this.bassSpikeFrequency > 0.3) {
+				multiplier *= 1.0 + (this.bassSpikeFrequency - 0.3) * 0.5;
+			}
+			
+			return multiplier;
+		}
+		
+		// Variable stuff doesn't need exaggeration
+		// Steady stuff can handle drama
+		const baseMultiplier = 1.0;
+		const variabilityCompensation = (1 - this.consistencyFactor) * 0.3;
+		return baseMultiplier - variabilityCompensation;
+	}
+
+	reset(): void {
+		this.analysisHistory = [];
+		this.adaptiveSmoothing = 0.15;
+		this.energyTrend = 0;
+		this.variability = 0;
+		this.consistencyFactor = 0.5;
+		this.averageBPM = 120;
+		this.bassSpikeFrequency = 0;
 	}
 }
 
@@ -171,6 +429,8 @@ export class AudioVisualiser implements AudioVisualiserAPI {
 	private options: Required<AudioVisualiserOptions>;
 	private lerpController: DynamicLerpController;
 	private dynamicIntensityController: DynamicIntensityController;
+	private songAdaptationController: SongAdaptationController;
+	private bassSpikeDetector: BassSpikeDetector;
 	private lastUpdateTime: number = 0;
 	private updateIntervalMs: number = 0; // 0 = uncapped, use requestAnimationFrame
 	private animationFrameId: number | null = null;
@@ -195,7 +455,7 @@ export class AudioVisualiser implements AudioVisualiserAPI {
 	}> = [];
 	private circlePool: HTMLElement[] = [];
 
-	// Initialization
+	// Set up the whole visualizer
 	constructor(
 		containerSelector: string | HTMLElement,
 		options: AudioVisualiserOptions = {}
@@ -220,14 +480,16 @@ export class AudioVisualiser implements AudioVisualiserAPI {
 
 		this.lerpController = new DynamicLerpController({
 			bpmMin: 80,
-			bpmMax: 180,
-			lerpMin: 0.3,
+			bpmMax: 200,  // Extended for high-BPM genres
+			lerpMin: 0.2,  // More reactive minimum
 			lerpMax: 0.8,
 			curve: 'exponential'
 		});
 
 		this.lerpController.setTransitionSpeed(0.1);
 		this.dynamicIntensityController = new DynamicIntensityController();
+		this.songAdaptationController = new SongAdaptationController();
+		this.bassSpikeDetector = new BassSpikeDetector();
 
 		this.container = this.resolveContainer(containerSelector);
 		this.ensureContainerPosition();
@@ -559,7 +821,7 @@ export class AudioVisualiser implements AudioVisualiserAPI {
 	}
 
 	private async fetchCoverArtData(coverUrl: string): Promise<{ colour: string; palette: string[] }> {
-		// Check cache first
+		// Already grabbed this cover? Use it
 		const cached = this.imageCache.get(coverUrl);
 		const now = Date.now();
 		if (cached && (now - cached.timestamp) < this.CACHE_TTL) {
@@ -599,7 +861,7 @@ export class AudioVisualiser implements AudioVisualiserAPI {
 			console.error('[reactivo] Error fetching cover art data:', error);
 		}
 
-		// Cache the result
+		// Remember it for next time
 		if (result.colour !== '255, 255, 255' || result.palette.length > 0) {
 			this.imageCache.set(coverUrl, {
 				colour: result.colour,
@@ -650,7 +912,7 @@ export class AudioVisualiser implements AudioVisualiserAPI {
 	private createAtmosphereCircles(colors: string[]): void {
 		if (!this.atmosphereLayer) return;
 
-		// Recycle existing circles instead of recreating
+		// Fade out the old circles, we'll bring in new ones
 		this.atmosphereCircles.forEach((circle) => {
 			circle.inUse = false;
 			circle.element.style.opacity = '0';
@@ -658,13 +920,13 @@ export class AudioVisualiser implements AudioVisualiserAPI {
 			setTimeout(() => {
 				circle.element.style.display = 'none';
 				this.circlePool.push(circle.element);
-			}, 400); // Wait for fade-out to complete
+			}, 400); // Let it finish disappearing
 		});
 		this.atmosphereCircles = [];
 
 		if (colors.length === 0) return;
 
-		// HERE HERE - DETERMINE NUMBER OF CIRCLES BASED ON CONTAINER SIZE AND COLOR COUNT
+		// Figure out how many circles fit in this space
 		const width = this.container.offsetWidth || window.innerWidth;
 		const height = this.container.offsetHeight || window.innerHeight;
 		const minDim = Math.min(width, height);
@@ -691,7 +953,7 @@ export class AudioVisualiser implements AudioVisualiserAPI {
 		const reactiveCorner = corners[Math.floor(Math.random() * corners.length)];
 		const staticColor = this.toneDownCircleColor(baseColor);
 
-		// SET SIZE OF STATIC CORNER CIRCLE BASED ON CONTAINER SIZE WITH SOME RANDOMNESS
+		// Make the corner circle with some random flair
 		const staticSize = Math.round(minDim * (0.3 + Math.random() * 1));
 		const staticLeft = Math.round(reactiveCorner.x === 0 ? 0 : width - staticSize);
 		const staticTop = Math.round(reactiveCorner.y === 0 ? 0 : height - staticSize);
@@ -735,7 +997,7 @@ export class AudioVisualiser implements AudioVisualiserAPI {
 			const col = i % gridCols;
 			const row = Math.floor(i / gridCols);
 
-			// SET TARGET SIZE BASED ON CONTAINER SIZE WITH SOME RANDOMNESS
+			// Size this one up with some randomness for that organic feel
 			const targetSize = Math.round(Math.max(cellWidth, cellHeight) * (1.05 + Math.random() * 1));
 			const centerX = col * cellWidth + cellWidth * 0.5;
 			const centerY = row * cellHeight + cellHeight * 0.5;
@@ -754,14 +1016,14 @@ export class AudioVisualiser implements AudioVisualiserAPI {
 			const proximity = 1 - distance / maxDistance;
 			const reactToBass = proximity > 0.3 ? Math.random() < 0.72 : Math.random() < 0.18;
 
-			// Use pooled circle or create new one
+			// Reuse what we can, make new ones if needed
 			let circle: HTMLElement;
 			if (this.circlePool.length > 0) {
 				circle = this.circlePool.pop()!;
 				circle.style.display = 'block';
 				circle.style.opacity = '0';
 				circle.style.transition = 'opacity 0.8s ease-out, transform 0.6s ease-out !important';
-				// Animate pooled circle entrance
+				// Let it fade back in
 				setTimeout(() => {
 					circle.style.opacity = '0.94';
 				}, i * 80);
@@ -795,7 +1057,7 @@ export class AudioVisualiser implements AudioVisualiserAPI {
 					inUse: true,
 				});
 
-				// Animate entrance with staggered timing
+				// Bring them in one by one for a smooth cascade
 				setTimeout(() => {
 					circle.style.opacity = '0.94';
 				}, i * 80); // Staggered delay for smooth sequential appearance
@@ -844,7 +1106,7 @@ export class AudioVisualiser implements AudioVisualiserAPI {
 		});
 	}
 
-	// Connection management
+	// Handle WebSocket connection stuff
 	private connect(): void {
 		try {
 			if (this.ws) {
@@ -863,7 +1125,7 @@ export class AudioVisualiser implements AudioVisualiserAPI {
 					if (Array.isArray(data) && data.length > 0) {
 						this.pendingAudioData = data[0];
 						
-						// Start animation loop if not already running
+						// Fire up the animation loop if it's not running
 						if (!this.animationFrameId) {
 							this.startAnimationLoop();
 						}
@@ -874,7 +1136,7 @@ export class AudioVisualiser implements AudioVisualiserAPI {
 			};
 
 			this.ws.onerror = () => {
-				// Connection error occurred
+				// WebSocket had an issue, but we'll handle reconnect elsewhere
 			};
 
 			this.ws.onclose = () => {
@@ -912,7 +1174,7 @@ export class AudioVisualiser implements AudioVisualiserAPI {
 		this.options.isNowPlayingVisible = pause;
 	}
 
-	// Visual updates
+	// Handle all the animation and visual updates
 	private lerp(start: number, end: number, factor: number): number {
 		return start + (end - start) * factor;
 	}
@@ -941,7 +1203,12 @@ export class AudioVisualiser implements AudioVisualiserAPI {
 			baseIntensity = Math.max(baseIntensity, dynamicFactor * 0.5);
 		}
 
-		const totalIntensity = baseIntensity * (this.options.intensityMultiplier ?? 1);
+		// Let the song shape how intense things get
+		const adaptiveIntensityMultiplier = this.songAdaptationController.getAdaptiveIntensityMultiplier();
+		const totalIntensity = baseIntensity * (this.options.intensityMultiplier ?? 1) * adaptiveIntensityMultiplier;
+
+		// Feed it more data so it learns what kind of track this is
+		this.songAdaptationController.addAnalysis(analysis, totalIntensity, this.bassSpikeDetector.getSpikeLevel());
 
 		this.updateTargetValues(totalIntensity);
 		this.applyLerping();
@@ -949,8 +1216,17 @@ export class AudioVisualiser implements AudioVisualiserAPI {
 	}
 
 	private calculateBaseIntensity(strongestBass: any, bassAverage: number): number {
-		const lowFreqIntensity = Math.max(0, 1 - (strongestBass.frequency - 20) / 200);
-		const magnitudeIntensity = Math.min(bassAverage * 10000, 1);
+		// The sweet spot for bass is 20-150Hz, anything else just muddies it up
+		const isRealBass = strongestBass.frequency >= 20 && strongestBass.frequency <= 150;
+		const lowFreqIntensity = isRealBass 
+			? Math.max(0, 1 - (strongestBass.frequency - 20) / 130)
+			: Math.max(0, 1 - (strongestBass.frequency - 20) / 250) * 0.5;
+		
+		// When the bass hits, make it count
+		const magnitudeIntensity = isRealBass
+			? Math.min(bassAverage * 12000, 1) * (1 + strongestBass.magnitude * 2.5)
+			: Math.min(bassAverage * 8000, 1);
+		
 		return lowFreqIntensity * magnitudeIntensity;
 	}
 
@@ -1076,7 +1352,7 @@ export class AudioVisualiser implements AudioVisualiserAPI {
 
 
 
-	// Public API
+	// The outside API that users can call
 	public disconnect(): void {
 		if (this.reconnectTimeout) {
 			clearTimeout(this.reconnectTimeout);
@@ -1152,7 +1428,7 @@ export class AudioVisualiser implements AudioVisualiserAPI {
 				this.pendingAudioData = null;
 			}
 			
-			// Continue animation loop
+			// Keep it going
 			this.animationFrameId = requestAnimationFrame(animate);
 		};
 		

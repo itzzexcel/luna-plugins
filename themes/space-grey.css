@@ -349,7 +349,7 @@ button[data-test="close-now-playing"]:hover {
     top: calc(var(--headerHeight) + 80px);
 }
 
-[data-test="media-table"] > div > div {
+[data-test="media-table"] > div {
     backdrop-filter: blur(calc(15vh)) saturate(4) brightness(1);
     background-image: var(--img) !important;
     border-radius: 8px;
@@ -650,4 +650,8 @@ div:has(> [class*="_profilePictureWithName"], > [data-test="beta-features-row-jo
 [role="tabpanel"]:has([data-test="album-info-track-credits"]) > div > div {
     border: var(--wave-color-opacity-contrast-fill-ultra-thin) solid 1px;
     border-radius: 3px !important;
+}
+
+.rl-wbw-word, .rl-wbw-word {
+    text-transform: lowercase !important;
 }

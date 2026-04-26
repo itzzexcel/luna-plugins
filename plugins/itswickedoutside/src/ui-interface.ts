@@ -51,24 +51,35 @@ const retrieveVideoFallbackSrc = (): string | null => {
 };
 
 export const retrieveCoverArt = function (): string | null {
-	const isPlayerMarket = true; //getFeatureFlag("player-market-ui") === true;
-	const videoElement = document.querySelector('figure[class*="_albumImage"] > div > div > div > video') as HTMLVideoElement;
+    let coverArtImageSrc: string | null = null;
 
-	const posterSrc = videoElement?.poster ? upscaleUrl(videoElement.poster, "1280x1280") : null;
+    const coverArtImageElement = document.querySelector(
+        '[data-test="current-media-imagery"] img',
+    ) as HTMLImageElement | null;
 
-	const src = isPlayerMarket
-		? (retrieveImageSrc(
-			'[data-test="creator-content-now-playing-image"]',
-		) ??
-			retrieveImageSrc('[data-test="now-playing-artwork"]') ??
-			posterSrc ??
-			retrieveVideoFallbackSrc())
-		: (retrieveImageSrc(
-			'figure[class*="_albumImage"] > div > div > div > img',
-		) ?? posterSrc ?? retrieveVideoFallbackSrc());
+    if (coverArtImageElement) {
+        coverArtImageSrc = coverArtImageElement.src;
+        const targetRes = "1280x1280";
+        coverArtImageSrc = coverArtImageSrc.replace(/\d+x\d+/, targetRes);
+    } else {
+        const videoElement = document.querySelector(
+            '[data-test="current-media-imagery"] video',
+        ) as HTMLVideoElement | null;
 
-	if (!src) console.log("[reactivo] no image or video element for cover art");
-	return src ?? null;
+        if (videoElement) {
+            coverArtImageSrc = videoElement.getAttribute("poster");
+            if (coverArtImageSrc) {
+                const targetRes = "1280x1280";
+                coverArtImageSrc = coverArtImageSrc.replace(/\d+x\d+/, targetRes);
+            }
+        }
+    }
+
+    if (!coverArtImageSrc) {
+        console.log("[reactivo] no image or video element for cover art");
+    }
+
+    return coverArtImageSrc ?? null;
 };
 
 // Color extraction helpers
