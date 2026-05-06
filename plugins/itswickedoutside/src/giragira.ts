@@ -55,6 +55,7 @@ export interface AudioVisualiserAPI {
 	setDynamicIntensityEnabled?: (enabled: boolean) => void;
 	setEnhancedBackground?: (enabled: boolean) => void;
 	setBackgroundMode?: (mode: 'circles' | 'images') => void;
+	refreshAtmosphereCircles?: () => void;
 }
 
 // Detects sudden bass intensity spikes for genres with dynamic bass emphasis
@@ -1410,6 +1411,71 @@ export class AudioVisualiser implements AudioVisualiserAPI {
 		}
 		if (this.atmosphereLayer) {
 			this.atmosphereLayer.style.opacity = enabled && this.atmosphereCircles.length > 0 ? '1' : '0';
+		}
+	}
+
+	public refreshAtmosphereCircles(): void {
+		if (!this.atmosphereLayer) return;
+
+		const spinner = this.coverSpinner && this.coverSpinner.parentElement === this.atmosphereLayer
+			? this.coverSpinner
+			: null;
+
+		const fadeDuration = 400;
+		const oldElements: HTMLElement[] = [];
+
+		this.atmosphereCircles.forEach(circle => oldElements.push(circle.element));
+		this.circlePool.forEach(circle => oldElements.push(circle));
+
+		this.atmosphereCircles = [];
+		this.circlePool = [];
+
+		if (oldElements.length > 0) {
+			oldElements.forEach(el => {
+				if (el === spinner) return;
+				el.style.transition = 'opacity 0.4s ease-out, transform 0.6s ease-out !important';
+				el.style.opacity = '0';
+			});
+
+			window.setTimeout(() => {
+				oldElements.forEach(el => {
+					if (el.parentElement === this.atmosphereLayer) {
+						this.atmosphereLayer.removeChild(el);
+					}
+				});
+
+				if (spinner) {
+					this.atmosphereLayer.innerHTML = '';
+					this.atmosphereLayer.appendChild(spinner);
+				} else {
+					this.atmosphereLayer.innerHTML = '';
+				}
+
+				if (this.cachedAtmospherePalette.length > 0) {
+					this.createAtmosphereCircles(this.cachedAtmospherePalette);
+				}
+
+				if (this.atmosphereLayer) {
+					this.atmosphereLayer.style.opacity = this.options.useEnhancedBackground ? '1' : '0';
+				}
+			}, fadeDuration);
+			return;
+		}
+
+		if (this.cachedAtmospherePalette.length === 0) {
+			if (this.atmosphereLayer) {
+				this.atmosphereLayer.style.opacity = '0';
+			}
+			return;
+		}
+
+		this.atmosphereLayer.innerHTML = '';
+		if (spinner) {
+			this.atmosphereLayer.appendChild(spinner);
+		}
+		this.createAtmosphereCircles(this.cachedAtmospherePalette);
+		if (this.atmosphereLayer) {
+			this.atmosphereLayer.style.opacity = this.options.useEnhancedBackground ? '1' : '0';
 		}
 	}
 

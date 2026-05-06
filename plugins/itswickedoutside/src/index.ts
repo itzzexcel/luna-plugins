@@ -154,6 +154,10 @@ MediaItem.onMediaTransition(unloads, (mediaItem: MediaItem) => {
 			visualiser.disconnect();
 		}
 		return;
+	} else {
+		if (visualiser) {
+			visualiser.refreshAtmosphereCircles?.();
+		}
 	}
 
 	try {
