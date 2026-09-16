@@ -1,5 +1,6 @@
 {
 	"name": "@itzzexcel/shareplus",
+	"version": "0.0.0",
 	"description": "Share links to tracks on different platforms.",
 	"author": {
 		"name": "itzzexcel",
