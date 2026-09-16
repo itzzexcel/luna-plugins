@@ -32,11 +32,11 @@ const PLATFORM_KEYS = Object.keys(PLATFORM_META) as (keyof DspLinks)[];
 const getEnabledPlatforms = (): (keyof DspLinks)[] => {
 	try {
 		const saved = localStorage.getItem("sharePlusPlatforms");
-		if (!saved) return PLATFORM_KEYS; // Return all if nothing saved
+		if (!saved) return PLATFORM_KEYS;
 		const enabled = JSON.parse(saved) as Record<string, boolean>;
 		return PLATFORM_KEYS.filter((key) => enabled[key] !== false);
 	} catch {
-		return PLATFORM_KEYS; // Return all on error
+		return PLATFORM_KEYS;
 	}
 };
 
@@ -46,10 +46,11 @@ const log = {
 };
 
 let capturedToken: string | null = null;
+let currentTrackId: number | null = null;
+let lastTarget: HTMLElement | null = null;
 
 const linksCache = new Map<number, DspLinks>();
 let fontAwesomePromise: Promise<void> | null = null;
-let currentTrackId: number | null = null;
 
 const restoreFetch = (() => {
 	const originalFetch = window.fetch;
@@ -129,38 +130,88 @@ function getCurrentTrackId(): number | null {
 	}
 }
 
+function readTrackIdFrom(el: HTMLElement | null): number | null {
+	if (!el) return null;
+	const raw =
+		el.getAttribute("data-track--content-id") ??
+		el.getAttribute("data-track-id") ??
+		el.getAttribute("data-id");
+	return raw ? Number(raw) : null;
+}
+
+function handleContextMenu(e: MouseEvent): void {
+	lastTarget = e.target as HTMLElement | null;
+}
+
+function handleClick(e: MouseEvent): void {
+	const target = e.target as HTMLElement | null;
+	if (target?.closest('[data-test="context-menu-button"]')) {
+		lastTarget = target;
+	}
+}
+
+document.addEventListener("contextmenu", handleContextMenu, true);
+document.addEventListener("click", handleClick, true);
+unloads.add(() => {
+	document.removeEventListener("contextmenu", handleContextMenu, true);
+	document.removeEventListener("click", handleClick, true);
+});
+
+function isVisible(el: HTMLElement): boolean {
+	return !!el.offsetParent && el.getBoundingClientRect().width > 0;
+}
+
 function getShareSubMenu(): HTMLElement | null {
-	let marker = document.querySelector<HTMLElement>(
+	const markers = document.querySelectorAll<HTMLElement>(
 		`[title="${CSS.escape(SHARE_SUBMENU_MARKER)}"]`
 	);
 
-	if (!marker) {
-		const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_ELEMENT, {
-			acceptNode(node) {
-				const el = node as HTMLElement;
-				const own = Array.from(el.childNodes)
-					.filter((n) => n.nodeType === Node.TEXT_NODE)
-					.map((n) => n.textContent?.trim())
-					.join("");
-				return own === SHARE_SUBMENU_MARKER
-					? NodeFilter.FILTER_ACCEPT
-					: NodeFilter.FILTER_SKIP;
-			},
-		});
-		marker = walker.nextNode() as HTMLElement | null;
+	for (const marker of Array.from(markers).reverse()) {
+		let parent: HTMLElement | null = marker.parentElement;
+		while (parent) {
+			const cn =
+				typeof parent.className === "string"
+					? parent.className
+					: (parent.className as unknown as SVGAnimatedString)?.baseVal ?? "";
+			if (cn.includes("_subMenu_")) {
+				if (isVisible(parent)) return parent;
+				break;
+			}
+			parent = parent.parentElement;
+		}
 	}
 
-	if (!marker) return null;
+	return null;
+}
 
-	let parent: HTMLElement | null = marker.parentElement;
-	while (parent) {
-		const cn =
-			typeof parent.className === "string"
-				? parent.className
-				: (parent.className as unknown as SVGAnimatedString)?.baseVal ?? "";
-		if (cn.includes("_subMenu_")) return parent;
-		parent = parent.parentElement;
+function extractImageKey(src: string | null | undefined): string | null {
+	if (!src) return null;
+	const m = src.match(/\/images\/(.+?)\/\d+x\d+/);
+	return m?.[1] ?? null;
+}
+
+function resolveTrackIdFromMenu(subMenu: HTMLElement): number | null {
+	const menu = subMenu.closest<HTMLElement>('[data-test="contextmenu"]');
+	if (!menu) return null;
+
+	const img = menu.querySelector<HTMLImageElement>('[data-test="context-menu-album-image"]');
+	const title = menu.querySelector('[data-test="contextmenu-title"]')?.textContent?.trim();
+	const key = extractImageKey(img?.src);
+
+	if (!key) return null;
+
+	const rows = document.querySelectorAll<HTMLElement>('[data-type="mediaItem"]');
+	for (const row of rows) {
+		const rowImg = row.querySelector<HTMLImageElement>('img');
+		if (extractImageKey(rowImg?.src) !== key) continue;
+		if (title) {
+			const rowTitle = row.querySelector('[data-test="table-cell-title"]')?.textContent?.trim();
+			if (rowTitle !== title) continue;
+		}
+		const id = readTrackIdFrom(row);
+		if (id) return id;
 	}
+
 	return null;
 }
 
@@ -253,11 +304,8 @@ function buildLinkItem(url: string, label: string, iconClass: string): HTMLLIEle
 	return li;
 }
 
-async function injectLinks(links: DspLinks | null): Promise<void> {
+async function injectLinks(links: DspLinks | null, subMenu: HTMLElement): Promise<void> {
 	if (!links) return;
-
-	const subMenu = getShareSubMenu();
-	if (!subMenu) return;
 
 	const ul = subMenu.querySelector("ul");
 	if (!ul) return;
@@ -273,13 +321,29 @@ async function injectLinks(links: DspLinks | null): Promise<void> {
 	}
 }
 
+function resolveTrackId(subMenu: HTMLElement): number | null {
+	const fromMenu = resolveTrackIdFromMenu(subMenu);
+	if (fromMenu) return fromMenu;
+
+	if (lastTarget) {
+		const row = lastTarget.closest<HTMLElement>('[data-type="mediaItem"]');
+		if (row) {
+			const id = readTrackIdFrom(row);
+			if (id) return id;
+		}
+	}
+
+	return currentTrackId ?? getCurrentTrackId();
+}
+
 MediaItem.onMediaTransition(unloads, async (mediaItem: MediaItem) => {
 	if (!mediaItem) return;
 	currentTrackId = Number(mediaItem.id);
 
 	const links = await fetchSongPlatforms(currentTrackId);
-	if (links && document.querySelector('[class*="_subMenu_"]')) {
-		void injectLinks(links);
+	const subMenu = getShareSubMenu();
+	if (links && subMenu) {
+		void injectLinks(links, subMenu);
 	}
 });
 
@@ -294,11 +358,14 @@ const observer = new MutationObserver(async (mutations) => {
 	);
 	if (!addedSubMenu) return;
 
-	const id = currentTrackId ?? getCurrentTrackId();
+	const subMenu = getShareSubMenu();
+	if (!subMenu) return;
+
+	const id = resolveTrackId(subMenu);
 	if (!id) return;
 
 	const links = await fetchSongPlatforms(id);
-	void injectLinks(links);
+	void injectLinks(links, subMenu);
 });
 
 observer.observe(document.body, { childList: true, subtree: true });
@@ -309,7 +376,9 @@ unloads.add(() => observer.disconnect());
 	injectLinks,
 	fetchSongPlatforms,
 	getCurrentTrackId,
+	resolveTrackIdFromMenu,
 	waitForToken,
 	get capturedToken() { return capturedToken; },
 	get currentTrackId() { return currentTrackId; },
+	get lastTarget() { return lastTarget; },
 };
