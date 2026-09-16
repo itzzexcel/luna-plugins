@@ -29,16 +29,27 @@ const PLATFORM_META: Record<keyof DspLinks, { label: string; icon: string }> = {
 
 const PLATFORM_KEYS = Object.keys(PLATFORM_META) as (keyof DspLinks)[];
 
+const getEnabledPlatforms = (): (keyof DspLinks)[] => {
+	try {
+		const saved = localStorage.getItem("sharePlusPlatforms");
+		if (!saved) return PLATFORM_KEYS; // Return all if nothing saved
+		const enabled = JSON.parse(saved) as Record<string, boolean>;
+		return PLATFORM_KEYS.filter((key) => enabled[key] !== false);
+	} catch {
+		return PLATFORM_KEYS; // Return all on error
+	}
+};
+
 const log = {
 	msg: (...args: unknown[]) => console.log("[SharePlus]", ...args),
 	err: (...args: unknown[]) => console.error("[SharePlus]", ...args),
 };
 
 let capturedToken: string | null = null;
-let currentTrackId: number | null = null;
 
 const linksCache = new Map<number, DspLinks>();
 let fontAwesomePromise: Promise<void> | null = null;
+let currentTrackId: number | null = null;
 
 const restoreFetch = (() => {
 	const originalFetch = window.fetch;
@@ -255,7 +266,7 @@ async function injectLinks(links: DspLinks | null): Promise<void> {
 
 	await ensureFontAwesome();
 
-	for (const key of PLATFORM_KEYS) {
+	for (const key of getEnabledPlatforms()) {
 		const href = links[key]?.href;
 		if (!href) continue;
 		ul.appendChild(buildLinkItem(href, PLATFORM_META[key].label, PLATFORM_META[key].icon));
