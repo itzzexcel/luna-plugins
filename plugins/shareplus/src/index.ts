@@ -4,10 +4,20 @@ import { MediaItem, redux } from "@luna/lib";
 export { Settings } from "./Settings";
 export const unloads = new Set<LunaUnload>();
 
-const SHARE_SUBMENU_MARKER = "Music shared from TIDAL can be opened on other services";
 const INJECT_FLAG = "data-luna-dsp-links";
+const INJECT_KEY_DATASET = "lunaDspKey"; // -> data-luna-dsp-key
 const FONTAWESOME_URL = "https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css";
 const TOKEN_TIMEOUT_MS = 10_000;
+
+/** Un elemento cuenta como "fila" si matchea alguno de estos. */
+const ROW_SELECTOR = [
+	'[data-type="mediaItem"]',
+	"[data-track--content-id]",
+	'[data-test="tracklist-row"]',
+].join(", ");
+
+/** Cualquier evento con target dentro de esto NO es un trigger de apertura de menú. */
+const OPEN_MENU_SELECTOR = '[data-test="contextmenu"], [class*="_subMenu_"]';
 
 type DspLinks = {
 	spotify?: { href: string };
@@ -47,7 +57,6 @@ const log = {
 
 let capturedToken: string | null = null;
 let currentTrackId: number | null = null;
-let lastTarget: HTMLElement | null = null;
 
 const linksCache = new Map<number, DspLinks>();
 let fontAwesomePromise: Promise<void> | null = null;
@@ -120,6 +129,20 @@ async function fetchSongPlatforms(id: number): Promise<DspLinks | null> {
 	}
 }
 
+type TriggerSource = "row" | "global";
+
+type Trigger = {
+	seq: number;
+	trackId: number | null;
+	source: TriggerSource;
+};
+
+let triggerSeq = 0;
+let pendingTrigger: Trigger | null = null;
+let lastScannedSeq = -1;
+
+const menuStamps = new WeakMap<HTMLElement, Trigger>();
+
 function getCurrentTrackId(): number | null {
 	try {
 		const state: any = redux.store.getState();
@@ -130,89 +153,52 @@ function getCurrentTrackId(): number | null {
 	}
 }
 
-function readTrackIdFrom(el: HTMLElement | null): number | null {
+function readTrackIdFrom(el: Element | null | undefined): number | null {
 	if (!el) return null;
 	const raw =
 		el.getAttribute("data-track--content-id") ??
 		el.getAttribute("data-track-id") ??
 		el.getAttribute("data-id");
-	return raw ? Number(raw) : null;
+	if (!raw) return null;
+	const n = Number(raw);
+	return Number.isFinite(n) && n > 0 ? n : null;
 }
 
-function handleContextMenu(e: MouseEvent): void {
-	lastTarget = e.target as HTMLElement | null;
-}
-
-function handleClick(e: MouseEvent): void {
+function captureTrigger(e: Event): void {
 	const target = e.target as HTMLElement | null;
-	if (target?.closest('[data-test="context-menu-button"]')) {
-		lastTarget = target;
-	}
+	if (!target || typeof target.closest !== "function") return;
+	if (target.closest(OPEN_MENU_SELECTOR)) return;
+
+	const row = target.closest<HTMLElement>(ROW_SELECTOR);
+	const rowId =
+		readTrackIdFrom(row) ??
+		readTrackIdFrom(target.closest<HTMLElement>('[data-test="context-menu-button"]'));
+
+	pendingTrigger = {
+		seq: ++triggerSeq,
+		trackId: rowId ?? getCurrentTrackId(),
+		source: rowId ? "row" : "global",
+	};
+
+	if (pendingTrigger.trackId) void fetchSongPlatforms(pendingTrigger.trackId);
 }
 
-document.addEventListener("contextmenu", handleContextMenu, true);
-document.addEventListener("click", handleClick, true);
+for (const type of ["pointerdown", "mousedown", "contextmenu"] as const) {
+	document.addEventListener(type, captureTrigger, true);
+}
 unloads.add(() => {
-	document.removeEventListener("contextmenu", handleContextMenu, true);
-	document.removeEventListener("click", handleClick, true);
+	for (const type of ["pointerdown", "mousedown", "contextmenu"] as const) {
+		document.removeEventListener(type, captureTrigger, true);
+	}
 });
 
-function isVisible(el: HTMLElement): boolean {
-	return !!el.offsetParent && el.getBoundingClientRect().width > 0;
-}
-
-function getShareSubMenu(): HTMLElement | null {
-	const markers = document.querySelectorAll<HTMLElement>(
-		`[title="${CSS.escape(SHARE_SUBMENU_MARKER)}"]`
-	);
-
-	for (const marker of Array.from(markers).reverse()) {
-		let parent: HTMLElement | null = marker.parentElement;
-		while (parent) {
-			const cn =
-				typeof parent.className === "string"
-					? parent.className
-					: (parent.className as unknown as SVGAnimatedString)?.baseVal ?? "";
-			if (cn.includes("_subMenu_")) {
-				if (isVisible(parent)) return parent;
-				break;
-			}
-			parent = parent.parentElement;
-		}
+function resolveTriggerForMenu(menu: HTMLElement): Trigger | null {
+	const stamp = menuStamps.get(menu);
+	if (pendingTrigger && (!stamp || pendingTrigger.seq > stamp.seq)) {
+		menuStamps.set(menu, pendingTrigger);
+		return pendingTrigger;
 	}
-
-	return null;
-}
-
-function extractImageKey(src: string | null | undefined): string | null {
-	if (!src) return null;
-	const m = src.match(/\/images\/(.+?)\/\d+x\d+/);
-	return m?.[1] ?? null;
-}
-
-function resolveTrackIdFromMenu(subMenu: HTMLElement): number | null {
-	const menu = subMenu.closest<HTMLElement>('[data-test="contextmenu"]');
-	if (!menu) return null;
-
-	const img = menu.querySelector<HTMLImageElement>('[data-test="context-menu-album-image"]');
-	const title = menu.querySelector('[data-test="contextmenu-title"]')?.textContent?.trim();
-	const key = extractImageKey(img?.src);
-
-	if (!key) return null;
-
-	const rows = document.querySelectorAll<HTMLElement>('[data-type="mediaItem"]');
-	for (const row of rows) {
-		const rowImg = row.querySelector<HTMLImageElement>('img');
-		if (extractImageKey(rowImg?.src) !== key) continue;
-		if (title) {
-			const rowTitle = row.querySelector('[data-test="table-cell-title"]')?.textContent?.trim();
-			if (rowTitle !== title) continue;
-		}
-		const id = readTrackIdFrom(row);
-		if (id) return id;
-	}
-
-	return null;
+	return stamp ?? null;
 }
 
 function showCopied(btn: HTMLButtonElement): void {
@@ -267,8 +253,13 @@ function ensureFontAwesome(): Promise<void> {
 	return fontAwesomePromise;
 }
 
-function buildLinkItem(url: string, label: string, iconClass: string): HTMLLIElement {
-	const template = document.querySelector<HTMLElement>('[data-test="copy-share-link"]');
+function buildLinkItem(
+	subMenu: HTMLElement,
+	url: string,
+	label: string,
+	iconClass: string
+): HTMLLIElement {
+	const template = subMenu.querySelector<HTMLElement>('[data-test="copy-share-link"]');
 	const templateLi = template?.closest("li") as HTMLLIElement | null;
 
 	const li = templateLi
@@ -313,72 +304,96 @@ async function injectLinks(links: DspLinks | null, subMenu: HTMLElement): Promis
 	ul.querySelectorAll(`[${INJECT_FLAG}]`).forEach((n) => n.remove());
 
 	await ensureFontAwesome();
+	if (!document.contains(subMenu)) return;
 
 	for (const key of getEnabledPlatforms()) {
 		const href = links[key]?.href;
 		if (!href) continue;
-		ul.appendChild(buildLinkItem(href, PLATFORM_META[key].label, PLATFORM_META[key].icon));
+		ul.appendChild(buildLinkItem(subMenu, href, PLATFORM_META[key].label, PLATFORM_META[key].icon));
 	}
 }
 
-function resolveTrackId(subMenu: HTMLElement): number | null {
-	const fromMenu = resolveTrackIdFromMenu(subMenu);
-	if (fromMenu) return fromMenu;
+function isShareSubMenu(el: HTMLElement): boolean {
+	return !!el.querySelector('[data-test="copy-share-link"]');
+}
 
-	if (lastTarget) {
-		const row = lastTarget.closest<HTMLElement>('[data-type="mediaItem"]');
-		if (row) {
-			const id = readTrackIdFrom(row);
-			if (id) return id;
+async function processSubMenu(subMenu: HTMLElement): Promise<void> {
+	if (!isShareSubMenu(subMenu)) return;
+
+	const menu = subMenu.closest<HTMLElement>('[data-test="contextmenu"]');
+	if (!menu) return;
+
+	const trigger = resolveTriggerForMenu(menu);
+	const id = trigger?.trackId ?? getCurrentTrackId();
+	if (!id) return;
+
+	const key = `${trigger?.seq ?? 0}:${id}`;
+	if (subMenu.dataset[INJECT_KEY_DATASET] === key) return;
+	subMenu.dataset[INJECT_KEY_DATASET] = key;
+
+	log.msg(`submenu -> source=${trigger?.source ?? "fallback"} id=${id}`);
+
+	const links = await fetchSongPlatforms(id);
+
+	if (!document.contains(subMenu) || subMenu.dataset[INJECT_KEY_DATASET] !== key) return;
+
+	if (!links) {
+		delete subMenu.dataset[INJECT_KEY_DATASET]; 
+		return;
+	}
+
+	await injectLinks(links, subMenu);
+}
+
+function collectAddedSubMenus(mutations: MutationRecord[]): HTMLElement[] {
+	const found = new Set<HTMLElement>();
+
+	for (const m of mutations) {
+		for (const node of Array.from(m.addedNodes)) {
+			if (!(node instanceof HTMLElement)) continue;
+
+			const cn = typeof node.className === "string" ? node.className : "";
+			if (cn.includes("_subMenu_")) found.add(node);
+
+			node.querySelectorAll?.<HTMLElement>('[class*="_subMenu_"]').forEach((el) => found.add(el));
 		}
 	}
 
-	return currentTrackId ?? getCurrentTrackId();
+	return Array.from(found);
 }
 
-MediaItem.onMediaTransition(unloads, async (mediaItem: MediaItem) => {
-	if (!mediaItem) return;
-	currentTrackId = Number(mediaItem.id);
+const observer = new MutationObserver((mutations) => {
+	let subMenus = collectAddedSubMenus(mutations);
 
-	const links = await fetchSongPlatforms(currentTrackId);
-	const subMenu = getShareSubMenu();
-	if (links && subMenu) {
-		void injectLinks(links, subMenu);
+	if (subMenus.length === 0 && pendingTrigger && pendingTrigger.seq !== lastScannedSeq) {
+		lastScannedSeq = pendingTrigger.seq;
+		subMenus = Array.from(document.querySelectorAll<HTMLElement>('[class*="_subMenu_"]'));
 	}
-});
 
-const observer = new MutationObserver(async (mutations) => {
-	const addedSubMenu = mutations.some((m) =>
-		Array.from(m.addedNodes).some(
-			(n) =>
-				n instanceof HTMLElement &&
-				((typeof n.className === "string" && n.className.includes("_subMenu_")) ||
-					n.querySelector?.('[class*="_subMenu_"]'))
-		)
-	);
-	if (!addedSubMenu) return;
-
-	const subMenu = getShareSubMenu();
-	if (!subMenu) return;
-
-	const id = resolveTrackId(subMenu);
-	if (!id) return;
-
-	const links = await fetchSongPlatforms(id);
-	void injectLinks(links, subMenu);
+	for (const subMenu of subMenus) void processSubMenu(subMenu);
 });
 
 observer.observe(document.body, { childList: true, subtree: true });
 unloads.add(() => observer.disconnect());
 
+MediaItem.onMediaTransition(unloads, async (mediaItem: MediaItem) => {
+	if (!mediaItem) return;
+	currentTrackId = Number(mediaItem.id);
+	void fetchSongPlatforms(currentTrackId);
+});
+
+/* ------------------------------------------------------------------ */
+/* Debug                                                               */
+/* ------------------------------------------------------------------ */
+
 (window as any).__sharePlus = {
-	getShareSubMenu,
 	injectLinks,
 	fetchSongPlatforms,
 	getCurrentTrackId,
-	resolveTrackIdFromMenu,
+	processSubMenu,
 	waitForToken,
 	get capturedToken() { return capturedToken; },
 	get currentTrackId() { return currentTrackId; },
-	get lastTarget() { return lastTarget; },
+	get pendingTrigger() { return pendingTrigger; },
+	stampFor: (menu: HTMLElement) => menuStamps.get(menu),
 };
