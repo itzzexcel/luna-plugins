@@ -19,6 +19,7 @@ export let dynamicLerpEnabled: boolean = true;
 export let dynamicIntensityEnabled: boolean = false;
 export let dynamicCoverColour: boolean = false;
 export let enhancedBackgroundEnabled: boolean = DataStoreService.enhancedBackgroundEnabled;
+export let apolMusicWannabeEnabled: boolean = DataStoreService.apolMusicWannabeEnabled ?? false;
 export let backgroundMode: 'circles' | 'images' =
 	(DataStoreService.backgroundMode as 'circles' | 'images') || 'circles';
 
@@ -77,7 +78,6 @@ const initVisualiser = (): void => {
 			intensityMultiplier: vignetteIntensity,
 			useDynamicLerp: dynamicLerpEnabled,
 			useDynamicIntensity: dynamicIntensityEnabled,
-			useDynamicColour: dynamicCoverColour,
 			useEnhancedBackground: enhancedBackgroundEnabled,
 			backgroundMode,
 			zIndex: 0,
@@ -198,17 +198,22 @@ export function setDynamicIntensityEnabled(enabled: boolean) {
 	}
 }
 
-export function setDynamicColourArt(enabled: boolean) {
-	dynamicCoverColour = enabled;
-	if (visualiser && typeof visualiser.setDynamicColour === "function") {
-		visualiser.setDynamicColour(enabled);
-	}
-}
-
 export function setEnhancedBackground(enabled: boolean) {
 	enhancedBackgroundEnabled = enabled;
 	if (visualiser && typeof visualiser.setEnhancedBackground === "function") {
 		visualiser.setEnhancedBackground(enabled);
+	}
+}
+
+// Deprecated - kept for compatibility but no longer used
+export function setDynamicColourArt(enabled: boolean) {
+	dynamicCoverColour = enabled;
+}
+
+export function setApolMusicWannabeEnabled(enabled: boolean) {
+	apolMusicWannabeEnabled = enabled;
+	if (visualiser && typeof visualiser.setApolMusicWannabeEnabled === "function") {
+		visualiser.setApolMusicWannabeEnabled(enabled);
 	}
 }
 

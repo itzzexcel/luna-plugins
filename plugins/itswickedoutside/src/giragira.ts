@@ -3,7 +3,7 @@
  * Turns music into smooth, adaptive visuals that respond to bass and rhythm
  */
 
-import { currentDevice, Settings } from ".";
+import { apolMusicWannabeEnabled, currentDevice, Settings } from ".";
 import { DataStoreService } from "./Settings";
 import {
 	retrieveCoverArt,
@@ -40,6 +40,7 @@ export interface AudioVisualiserOptions {
 	useDynamicIntensity?: boolean;
 	useEnhancedBackground?: boolean;
 	backgroundMode?: 'circles' | 'images';
+	useApolMusicWannabe?: boolean;
 }
 
 export interface AudioVisualiserAPI {
@@ -55,6 +56,7 @@ export interface AudioVisualiserAPI {
 	setDynamicIntensityEnabled?: (enabled: boolean) => void;
 	setEnhancedBackground?: (enabled: boolean) => void;
 	setBackgroundMode?: (mode: 'circles' | 'images') => void;
+	setApolMusicWannabeEnabled?: (enabled: boolean) => void;
 	refreshAtmosphereCircles?: () => void;
 }
 
@@ -425,6 +427,8 @@ export class AudioVisualiser implements AudioVisualiserAPI {
 		targetCircleIntensity: 0,
 	};
 
+	private apolMusicWannabeEnabled: boolean = false;
+
 	private isLoadingCoverArt: boolean = false;
 
 	private options: Required<AudioVisualiserOptions>;
@@ -476,6 +480,7 @@ export class AudioVisualiser implements AudioVisualiserAPI {
 			isNowPlayingVisible: false,
 			useEnhancedBackground: false,
 			backgroundMode: 'circles',
+			useApolMusicWannabe: false,
 			...options,
 		};
 
@@ -876,17 +881,21 @@ export class AudioVisualiser implements AudioVisualiserAPI {
 
 	private createAtmosphereLayer(): HTMLElement {
 		let targetBlur = DataStoreService.backgroundMode === 'images' ? 45 : 100;
+		
+		// Use the instance property instead of the imported variable
+		const isApolMode = this.apolMusicWannabeEnabled || false;
+		
 		const layer = document.createElement('div');
 		layer.style.cssText = `
         position: absolute !important;
-        top: 50% !important;
-        left: 50% !important;
+        top: ${isApolMode ? "50%" : "100%"} !important;
+        left: ${isApolMode ? "105%" : "50%"} !important;
         width: 200% !important;
         height: 200% !important;
         transform: translate(-50%, -50%) !important; /* centrado */
         overflow: hidden !important;
         pointer-events: none !important;
-        filter: blur(${targetBlur}px) brightness(0.35) saturate(1) !important;
+        filter: blur(${targetBlur}px) brightness(0.45) saturate(1) !important;
         opacity: 0 !important;
         transition: opacity 0.35s ease-out !important;
         z-index: ${this.options.zIndex} !important;
@@ -945,19 +954,46 @@ export class AudioVisualiser implements AudioVisualiserAPI {
 		const baseColor = colors[0] ?? 'rgb(255, 255, 255)';
 		const palette = Array(circleCount).fill(baseColor);
 
-		const corners = [
-			{ x: 0, y: 0 },
-			{ x: 1, y: 0 },
-			{ x: 0, y: 1 },
-			{ x: 1, y: 1 },
-		];
-		const reactiveCorner = corners[Math.floor(Math.random() * corners.length)];
+		// Check if Apol Music wannabe mode is enabled
+		const apolMode = DataStoreService.apolMusicWannabeEnabled ?? false;
+		
+		let reactiveCorner: { x: number; y: number };
+		if (apolMode) {
+			// In Apol mode, use top-right corner as the reference
+			reactiveCorner = { x: 1, y: 0 };
+		} else {
+			// Random corner for normal mode
+			const corners = [
+				{ x: 0, y: 0 },
+				{ x: 1, y: 0 },
+				{ x: 0, y: 1 },
+				{ x: 1, y: 1 },
+			];
+			reactiveCorner = corners[Math.floor(Math.random() * corners.length)];
+		}
+		
 		const staticColor = this.toneDownCircleColor(baseColor);
-
-		// Make the corner circle with some random flair
-		const staticSize = Math.round(minDim * (0.3 + Math.random() * 1));
-		const staticLeft = Math.round(reactiveCorner.x === 0 ? 0 : width - staticSize);
-		const staticTop = Math.round(reactiveCorner.y === 0 ? 0 : height - staticSize);
+		
+		// Static circle positioning
+		let staticSize, staticLeft, staticTop;
+		
+		if (apolMode) {
+			// In Apol mode, force top-right corner with height constraint
+			const maxHeight = height * 0.4; // Maximum 40% from top
+			const maxWidth = width * 0.35; // Maximum 35% of screen width for the size
+			
+			// Limit size to fit within constraints
+			staticSize = Math.round(Math.min(minDim * 0.8, maxWidth));
+			
+			// Force position to exact top-right corner within height limit
+			staticLeft = width - staticSize;
+			staticTop = 0; // Start exactly at the top edge
+		} else {
+			// Normal mode behavior
+			staticSize = Math.round(minDim * (0.3 + Math.random() * 1));
+			staticLeft = Math.round(reactiveCorner.x === 0 ? 0 : width - staticSize);
+			staticTop = Math.round(reactiveCorner.y === 0 ? 0 : height - staticSize);
+		}
 
 		const staticCircle = document.createElement('div');
 		staticCircle.style.cssText = `
@@ -995,27 +1031,86 @@ export class AudioVisualiser implements AudioVisualiserAPI {
 
 		for (let i = 0; i < totalCircles; i++) {
 			const color = this.toneDownCircleColor(palette[i % palette.length]);
-			const col = i % gridCols;
-			const row = Math.floor(i / gridCols);
-
-			// Size this one up with some randomness for that organic feel
-			const targetSize = Math.round(Math.max(cellWidth, cellHeight) * (1.05 + Math.random() * 1));
-			const centerX = col * cellWidth + cellWidth * 0.5;
-			const centerY = row * cellHeight + cellHeight * 0.5;
-			const jitterX = (Math.random() - 0.5) * cellWidth * 0.28;
-			const jitterY = (Math.random() - 0.5) * cellHeight * 0.28;
-			const left = Math.round(centerX - targetSize * 0.5 + jitterX);
-			const top = Math.round(centerY - targetSize * 0.5 + jitterY);
-			const clampedLeft = Math.max(-targetSize * 0.25, Math.min(width - targetSize * 0.75, left));
-			const clampedTop = Math.max(-targetSize * 0.25, Math.min(height - targetSize * 0.75, top));
+			
+			let clampedLeft, clampedTop, targetSize;
+			
+			if (apolMode && i >= 0) {
+				// In Apol mode, ALL circles in grid start from top-right corner area
+				// Maximum height constraint: 40% of screen from top
+				const maxHeight = height * 0.4;
+				
+				// Create a compact grid starting from top-right corner
+				const rowsAvailable = Math.ceil(maxHeight / cellHeight);
+				const colsInGrid = 2; // Keep it compact on the right side
+				
+				// Calculate grid position from top-right for ALL circles (including i=0)
+				const colIndex = Math.min(i % colsInGrid, colsInGrid - 1);
+				const rowIndex = Math.min(Math.floor(i / colsInGrid), rowsAvailable - 1);
+				
+				// Position from top-right: x starts at right edge, decreases leftward
+				const rightEdge = width;
+				const centerX = rightEdge - ((colIndex + 1) * cellWidth) + cellWidth * 0.5;
+				const centerY = rowIndex * cellHeight + cellHeight * 0.5;
+				
+				const jitterX = (Math.random() - 0.5) * cellWidth * 0.4;
+				const jitterY = (Math.random() - 0.5) * cellHeight * 0.4;
+				targetSize = Math.round(Math.max(cellWidth * 0.8, cellHeight * 0.9) * (1.05 + Math.random() * 0.6));
+				
+				const left = Math.round(centerX - targetSize * 0.5 + jitterX);
+				const top = Math.round(centerY - targetSize * 0.5 + jitterY);
+				
+				// Clamp to ensure circles stay in top-right area
+				// Left boundary: circles must be in the rightmost 30% of screen
+				const maxLeft = width * 0.7; 
+				const minLeft = width - targetSize * 0.9;
+				
+				// Top boundary: within 40% height
+				const maxTop = maxHeight - targetSize * 0.9;
+				const minTop = -targetSize * 0.2;
+				
+				clampedLeft = Math.max(minLeft, Math.min(maxLeft, left));
+				clampedTop = Math.max(minTop, Math.min(maxTop, top));
+			} else {
+				// Normal mode behavior
+				const col = i % gridCols;
+				const row = Math.floor(i / gridCols);
+				
+				// Size this one up with some randomness for that organic feel
+				targetSize = Math.round(Math.max(cellWidth, cellHeight) * (1.05 + Math.random() * 1));
+				const centerX = col * cellWidth + cellWidth * 0.5;
+				const centerY = row * cellHeight + cellHeight * 0.5;
+				const jitterX = (Math.random() - 0.5) * cellWidth * 0.28;
+				const jitterY = (Math.random() - 0.5) * cellHeight * 0.28;
+				const left = Math.round(centerX - targetSize * 0.5 + jitterX);
+				const top = Math.round(centerY - targetSize * 0.5 + jitterY);
+				clampedLeft = Math.max(-targetSize * 0.25, Math.min(width - targetSize * 0.75, left));
+				clampedTop = Math.max(-targetSize * 0.25, Math.min(height - targetSize * 0.75, top));
+			}
+			
 			const circleCenterX = clampedLeft + targetSize * 0.5;
 			const circleCenterY = clampedTop + targetSize * 0.5;
-			const cornerX = reactiveCorner.x === 0 ? 0 : width;
-			const cornerY = reactiveCorner.y === 0 ? 0 : height;
-			const distance = Math.hypot(circleCenterX - cornerX, circleCenterY - cornerY);
-			const maxDistance = Math.hypot(width, height);
-			const proximity = 1 - distance / maxDistance;
-			const reactToBass = proximity > 0.3 ? Math.random() < 0.72 : Math.random() < 0.18;
+			
+			let reactToBass;
+			if (apolMode) {
+				// In Apol mode, circles closer to top-right are more reactive
+				// Top-right corner coordinates
+				const apolCornerX = width;
+				const apolCornerY = 0;
+				const apolDistance = Math.hypot(circleCenterX - apolCornerX, circleCenterY - apolCornerY);
+				const maxApodDistance = Math.hypot(width, height * 0.4); // Only consider top 40% area
+				const apolProximity = 1 - apolDistance / maxApodDistance;
+				
+				// Higher proximity = more likely to be reactive
+				reactToBass = apolProximity > 0.2 ? Math.random() < 0.85 : Math.random() < 0.3;
+			} else {
+				// Normal mode behavior
+				const cornerX = reactiveCorner.x === 0 ? 0 : width;
+				const cornerY = reactiveCorner.y === 0 ? 0 : height;
+				const distance = Math.hypot(circleCenterX - cornerX, circleCenterY - cornerY);
+				const maxDistance = Math.hypot(width, height);
+				const proximity = 1 - distance / maxDistance;
+				reactToBass = proximity > 0.3 ? Math.random() < 0.72 : Math.random() < 0.18;
+			}
 
 			// Reuse what we can, make new ones if needed
 			let circle: HTMLElement;
@@ -1069,13 +1164,14 @@ export class AudioVisualiser implements AudioVisualiserAPI {
 	private updateAtmosphereCircles(): void {
 		if (!this.atmosphereLayer || this.atmosphereCircles.length === 0) return;
 		const bgElements = document.querySelectorAll<HTMLElement>('[class*="_background_"]');
-
+	
 		bgElements.forEach(el => {
 			el.style.backgroundColor = "black";
 		});
-
+	
 		const currentIntensity = this.state.currentCircleIntensity;
 		const time = performance.now() * 0.0006;
+			
 		if (this.coverSpinner && this.options.backgroundMode === 'images') {
 			const spinAngle = (performance.now() * 0.008) % 360;
 			const moveX = Math.sin(time * 0.42) * 10;
@@ -1084,25 +1180,82 @@ export class AudioVisualiser implements AudioVisualiserAPI {
 			this.coverSpinner.style.transform = `translate3d(${moveX}px, ${moveY}px, 0) rotate(${spinAngle}deg) scale(${coverScale})`;
 			this.coverSpinner.style.backgroundPosition = `${50 + Math.sin(time * 0.2) * 5}% ${50 + Math.cos(time * 0.24) * 5}%`;
 		}
-
+	
+		const containerWidth = this.container.offsetWidth || window.innerWidth;
+		const containerHeight = this.container.offsetHeight || window.innerHeight;
+		const maxHeight = containerHeight * 0.4; // Apol mode height constraint
+	
 		this.atmosphereCircles.forEach((circle, index) => {
 			const isStatic = !!(circle as any).staticCorner;
 			const isReactive = circle.reactToBass && !isStatic;
+				
+			// Apol mode: extreme punch effect with ultra-fast attack/release
+			const apolMode = this.apolMusicWannabeEnabled;
+						
 			const baseDrift = 12 + index * 2;
+						
+			// Get the normal motion lerp first
 			const motionLerp = this.getLerpFactor(this.state.currentCircleIntensity, this.state.targetCircleIntensity);
-			const reactiveDrift = isReactive ? currentIntensity * 42 * motionLerp : currentIntensity * 8 * motionLerp;
-			const driftAmplitude = baseDrift + reactiveDrift;
-			const driftX = isStatic ? 0 : Math.sin(time + circle.offsetX) * driftAmplitude;
-			const driftY = isStatic ? 0 : Math.cos(time + circle.offsetY) * (driftAmplitude * 0.8);
-			const liquidX = isStatic ? 0 : Math.sin(time * 0.58 + circle.offsetY) * (driftAmplitude * 0.24);
-			const liquidY = isStatic ? 0 : Math.cos(time * 0.66 + circle.offsetX) * (driftAmplitude * 0.18);
-			const waveRotate = isStatic ? 0 : Math.sin(time * 0.45 + circle.offsetX) * 6;
-			const intensityScale = isStatic
-				? 1
-				: 1 + (isReactive ? currentIntensity * 0.45 : currentIntensity * 0.12) + Math.sin(time * 0.9 + circle.offsetX) * 0.03;
-			const targetOpacity = isStatic ? 1 : isReactive ? 1 : 0.9;
-
-			circle.element.style.transform = `translate(${driftX + liquidX}px, ${driftY + liquidY}px) rotate(${waveRotate}deg) scale(${intensityScale})`;
+						
+			// ULTRA FAST LERP for punchy percussion effect
+			// Attack (contraction when bass hits) = 0.85 (very fast)
+			// Release (expansion back) = 1.0 (instant recovery)
+			let effectiveMotionLerp;
+			if (apolMode && isReactive) {
+				effectiveMotionLerp = currentIntensity > this.state.currentCircleIntensity ? 0.85 : 1.0;
+			} else {
+				effectiveMotionLerp = motionLerp;
+			}
+				
+			let driftAmplitude, driftX, driftY, liquidX, liquidY, waveRotate, intensityScale, targetOpacity;
+				
+			if (apolMode && isReactive) {
+				// Apol mode: circles positioned from top-right and contract on bass with fast response
+				// Calculate base amplitude for movement
+				driftAmplitude = baseDrift;
+							
+				// Movement around top-right corner position with height constraint - reduced movement speed
+				driftX = isStatic ? 0 : Math.sin(time + circle.offsetX) * (driftAmplitude * 0.6); // Slower horizontal
+				driftY = isStatic ? 0 : Math.max(0, Math.min(containerHeight - circle.size, Math.cos(time + circle.offsetY) * (driftAmplitude * 0.5))); // Slower vertical
+							
+				liquidX = isStatic ? 0 : Math.sin(time * 0.58 + circle.offsetY) * (driftAmplitude * 0.12); // Reduced liquid movement
+				liquidY = isStatic ? 0 : Math.cos(time * 0.66 + circle.offsetX) * (driftAmplitude * 0.09); // Reduced liquid movement
+				waveRotate = isStatic ? 0 : Math.sin(time * 0.45 + circle.offsetX) * 4; // Less rotation
+							
+				// ULTRA DRAMATIC contraction for extreme punch effect
+				const contractionFactor = currentIntensity * 0.6; // Shrink up to 60% (MAXIMUM dramatic effect)
+				intensityScale = 1 - contractionFactor + Math.sin(time * 0.9 + circle.offsetX) * 0.03;
+				targetOpacity = 1 - contractionFactor * 0.8; // Opacity drops even more
+			} else if (apolMode && isStatic) {
+				// Static circles in Apol mode stay constrained to top-right area with minimal movement
+				driftAmplitude = baseDrift;
+							
+				const maxHeight = containerHeight * 0.7; // Allow more room since user set top: 70%
+				driftX = 0;
+				// Very limited movement - almost static
+				driftY = Math.max(0, Math.min(maxHeight - circle.size, Math.cos(time + circle.offsetY) * (driftAmplitude * 0.15)));
+				liquidX = 0;
+				liquidY = Math.max(0, Math.min(maxHeight - circle.size, Math.cos(time * 0.66 + circle.offsetX) * (driftAmplitude * 0.08)));
+				waveRotate = 0;
+				intensityScale = 1;
+				targetOpacity = 1;
+			} else {
+				// Normal mode: existing behavior
+				const reactiveDrift = isReactive ? currentIntensity * 42 * effectiveMotionLerp : currentIntensity * 8 * effectiveMotionLerp;
+				driftAmplitude = baseDrift + reactiveDrift;
+					
+				driftX = isStatic ? 0 : Math.sin(time + circle.offsetX) * driftAmplitude;
+				driftY = isStatic ? 0 : Math.cos(time + circle.offsetY) * (driftAmplitude * 0.8);
+				liquidX = isStatic ? 0 : Math.sin(time * 0.58 + circle.offsetY) * (driftAmplitude * 0.24);
+				liquidY = isStatic ? 0 : Math.cos(time * 0.66 + circle.offsetX) * (driftAmplitude * 0.18);
+				waveRotate = isStatic ? 0 : Math.sin(time * 0.45 + circle.offsetX) * 6;
+				intensityScale = isStatic
+					? 1
+					: 1 + (isReactive ? currentIntensity * 0.45 : currentIntensity * 0.12) + Math.sin(time * 0.9 + circle.offsetX) * 0.03;
+				targetOpacity = isStatic ? 1 : isReactive ? 1 : 0.9;
+			}
+	
+			circle.element.style.transform = `translate(${driftX || 0 + liquidX}px, ${driftY || 0 + liquidY}px) rotate(${waveRotate}deg) scale(${intensityScale})`;
 			circle.element.style.opacity = `${targetOpacity}`;
 		});
 	}
@@ -1314,6 +1467,7 @@ export class AudioVisualiser implements AudioVisualiserAPI {
 		}
 
 		const vignetteColour = this.cachedVignetteColour;
+		this.apolMusicWannabeEnabled = DataStoreService.apolMusicWannabeEnabled ?? false;
 
 		let vignetteBoxShadow = `
         inset 0 0 ${currentVignetteSize}px ${currentVignetteBlur}px rgba(${vignetteColour}, ${0.4 + currentIntensity * 0.6}),
@@ -1414,6 +1568,10 @@ export class AudioVisualiser implements AudioVisualiserAPI {
 		}
 	}
 
+	public setApolMusicWannabeEnabled(enabled: boolean): void {
+		this.apolMusicWannabeEnabled = enabled;
+	}
+
 	public refreshAtmosphereCircles(): void {
 		if (!this.atmosphereLayer) return;
 
@@ -1439,15 +1597,15 @@ export class AudioVisualiser implements AudioVisualiserAPI {
 
 			window.setTimeout(() => {
 				oldElements.forEach(el => {
-					if (el.parentElement === this.atmosphereLayer) {
+					if (el.parentElement === this.atmosphereLayer && this.atmosphereLayer) {
 						this.atmosphereLayer.removeChild(el);
 					}
 				});
 
-				if (spinner) {
+				if (spinner && this.atmosphereLayer) {
 					this.atmosphereLayer.innerHTML = '';
 					this.atmosphereLayer.appendChild(spinner);
-				} else {
+				} else if (this.atmosphereLayer) {
 					this.atmosphereLayer.innerHTML = '';
 				}
 

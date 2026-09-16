@@ -1,0 +1,11 @@
+{
+	"name": "@itzzexcel/shareplus",
+	"description": "Share links to tracks on different platforms.",
+	"author": {
+		"name": "itzzexcel",
+		"url": "https://github.com/itzzexcel",
+		"avatarUrl": "https://pfp.lexploits.top/api/pfp/686765279363334205/image"
+	},
+	"main": "./src/index.ts",
+	"type": "module"
+}

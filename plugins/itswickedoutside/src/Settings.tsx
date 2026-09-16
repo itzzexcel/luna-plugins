@@ -13,6 +13,7 @@ import {
 	setDynamicColourArt,
 	setEnhancedBackground,
 	setBackgroundMode,
+	setApolMusicWannabeEnabled,
 } from ".";
 import { ReactiveStore } from "@luna/core";
 
@@ -38,6 +39,7 @@ export const DataStoreService = await ReactiveStore.getPluginStorage(
 		vignetteUsesArtworkColourEnabled: true,
 		enhancedBackgroundEnabled: false,
 		backgroundMode: 'circles',
+		apolMusicWannabeEnabled: false,
 		isFirstRan: false,
 	},
 );
@@ -62,6 +64,10 @@ export const Settings = () => {
 	const [backgroundMode, setBackgroundModeState] =
 		React.useState<'circles' | 'images'>(
 			(DataStoreService.backgroundMode as 'circles' | 'images') || 'circles',
+		);
+	const [apolMusicWannabeEnabled, setApolMusicWannabeState] =
+		React.useState<boolean>(
+			DataStoreService.apolMusicWannabeEnabled ?? false,
 		);
 
 	const onIntensityChange = React.useCallback((val?: any) => {
@@ -130,6 +136,19 @@ export const Settings = () => {
 		[],
 	);
 
+	const onApolMusicWannabeChange = React.useCallback(
+		(_: unknown, checked?: boolean) => {
+			DataStoreService.apolMusicWannabeEnabled = !!checked;
+			setApolMusicWannabeState(
+				DataStoreService.apolMusicWannabeEnabled,
+			);
+			setApolMusicWannabeEnabled(
+				DataStoreService.apolMusicWannabeEnabled,
+			);
+		},
+		[],
+	);
+
 	return (
 		<LunaSettings>
 			<LunaNumberSetting
@@ -173,6 +192,12 @@ export const Settings = () => {
 				checked={backgroundMode === 'images'}
 				desc="Use distorted album artwork fragments instead of plain gradient blobs."
 				onChange={onBackgroundModeChange}
+			/>
+			<AnySwitch
+				title="Apol Music wannabe"
+				checked={apolMusicWannabeEnabled}
+				desc="Makes Enhanced Background circles shrink on bass instead of expanding."
+				onChange={onApolMusicWannabeChange}
 			/>
 		</LunaSettings>
 	);
