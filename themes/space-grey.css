@@ -758,3 +758,7 @@ div:has(> [class*="_profilePictureWithName"], > [data-test="beta-features-row-jo
 [data-test*="artist-card-"]>[class*="_contentContainer"]>[class*="_title"]>[class*="_titleText"] {
     text-align: left !important;
 }
+
+[class*="_container_"]:has([class*="_searchField_"]:focus-within) {
+  background-color: rgba(0, 0, 0, 0.075) !important;
+}
