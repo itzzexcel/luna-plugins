@@ -1,0 +1,12 @@
+{
+	"name": "@itzzexcel/memclean",
+	"description": "Optimizes Tidal RAM usage: decaches off-screen album art, hibernates background rendering, and cleans memory on track changes.",
+	"author": {
+		"name": "itzzexcel",
+		"url": "https://github.com/itzzexcel",
+		"avatarUrl": "https://pfp.lexploits.top/api/pfp/686765279363334205/image"
+	},
+	"main": "./src/index.ts",
+	"type": "module"
+}
+

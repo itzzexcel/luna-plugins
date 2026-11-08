@@ -15,6 +15,7 @@ export let availableDevices: any[] = [];
 export let currentDevice: string = "";
 
 export let vignetteIntensity: number = DataStoreService.vignetteIntensity;
+export let colorSaturation: number = DataStoreService.colorSaturation ?? 1;
 export let dynamicLerpEnabled: boolean = true;
 export let dynamicIntensityEnabled: boolean = false;
 export let dynamicCoverColour: boolean = false;
@@ -76,10 +77,12 @@ const initVisualiser = (): void => {
 			showStatus: false,
 			showStats: false,
 			intensityMultiplier: vignetteIntensity,
+			colorSaturation,
 			useDynamicLerp: dynamicLerpEnabled,
 			useDynamicIntensity: dynamicIntensityEnabled,
 			useEnhancedBackground: enhancedBackgroundEnabled,
 			backgroundMode,
+			useApolMusicWannabe: apolMusicWannabeEnabled,
 			zIndex: 0,
 		});
 	} catch (error) {
@@ -157,6 +160,7 @@ MediaItem.onMediaTransition(unloads, (mediaItem: MediaItem) => {
 	} else {
 		if (visualiser) {
 			visualiser.refreshAtmosphereCircles?.();
+			visualiser.updateCoverArt?.();
 		}
 	}
 
@@ -178,6 +182,13 @@ export function setVignetteIntensity(value: number) {
 	vignetteIntensity = value;
 	if (visualiser && typeof visualiser.setIntensityMultiplier === "function") {
 		visualiser.setIntensityMultiplier(value);
+	}
+}
+
+export function setColorSaturation(value: number) {
+	colorSaturation = value;
+	if (visualiser && typeof visualiser.setColorSaturation === "function") {
+		visualiser.setColorSaturation(value);
 	}
 }
 

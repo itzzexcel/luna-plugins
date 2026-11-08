@@ -36,9 +36,8 @@ const retrieveImageSrc = (selector: string): string | null => {
 	const el = document.querySelector(selector) as HTMLImageElement | null;
 	if (!el) return null;
 
-	const src = upscaleUrl(el.src, "1280x1280");
-	if (el.src !== src) el.src = src;
-	return src;
+	// Use 640x640 instead of 1280x1280 to save 75% uncompressed decoded bitmap RAM (1.6MB vs 6.5MB)
+	return upscaleUrl(el.src, "640x640");
 };
 
 const retrieveVideoFallbackSrc = (): string | null => {
@@ -47,7 +46,7 @@ const retrieveVideoFallbackSrc = (): string | null => {
 	) as HTMLImageElement | null;
 	if (!el) return null;
 
-	return upscaleUrl(el.src, "1280x720");
+	return upscaleUrl(el.src, "640x360");
 };
 
 export const retrieveCoverArt = function (): string | null {
@@ -59,8 +58,8 @@ export const retrieveCoverArt = function (): string | null {
 
     if (coverArtImageElement) {
         coverArtImageSrc = coverArtImageElement.src;
-        const targetRes = "1280x1280";
-        coverArtImageSrc = coverArtImageSrc.replace(/\d+x\d+/, targetRes);
+        // 640x640 provides crystal clear visuals while avoiding massive 1280x1280 RAM allocations
+        coverArtImageSrc = coverArtImageSrc.replace(/\d+x\d+/, "640x640");
     } else {
         const videoElement = document.querySelector(
             '[data-test="current-media-imagery"] video',
@@ -69,8 +68,7 @@ export const retrieveCoverArt = function (): string | null {
         if (videoElement) {
             coverArtImageSrc = videoElement.getAttribute("poster");
             if (coverArtImageSrc) {
-                const targetRes = "1280x1280";
-                coverArtImageSrc = coverArtImageSrc.replace(/\d+x\d+/, targetRes);
+                coverArtImageSrc = coverArtImageSrc.replace(/\d+x\d+/, "640x640");
             }
         }
     }
@@ -318,7 +316,7 @@ const prepareCanvas = (imageElement: HTMLImageElement) => {
 		return null;
 	}
 
-	const maxSize = 512;
+	const maxSize = 128; // 128x128 provides rich color fidelity while using 94% less memory than 512x512
 	if (canvasWidth > maxSize || canvasHeight > maxSize) {
 		const scale = Math.min(maxSize / canvasWidth, maxSize / canvasHeight);
 		canvasWidth = Math.floor(canvasWidth * scale);
@@ -340,7 +338,7 @@ const prepareCanvas = (imageElement: HTMLImageElement) => {
 
 const samplePixels = (canvas: HTMLCanvasElement, ctx: CanvasRenderingContext2D) => {
 	const data = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
-	const step = 6;
+	const step = 4; // Fast, representative pixel sampling
 
 	interface ColorBucket {
 		r: number;
@@ -513,81 +511,98 @@ const findBestColor = (vibrantMap: Map<number, any>, dominantMap: Map<number, an
 	return `${finalR}, ${finalG}, ${finalB}`;
 };
 
-export function retrieveCoverArtVibrant(imageElement: HTMLImageElement): string {
+export function retrieveCoverArtDataUnified(
+	imageElement: HTMLImageElement,
+	maxColors = 7,
+): { colour: string; palette: string[] } {
 	const canvasData = prepareCanvas(imageElement);
-	if (!canvasData) return "255, 255, 255";
+	if (!canvasData) {
+		return { colour: "255, 255, 255", palette: ["rgb(255, 255, 255)"] };
+	}
 
 	const { canvas, ctx } = canvasData;
-	const { vibrantMap, dominantMap, perimeterHues, totalPixels } = samplePixels(canvas, ctx);
+	let vibrantColor = "255, 255, 255";
+	let paletteColors: string[] = ["rgb(255, 255, 255)"];
 
-	return findBestColor(vibrantMap, dominantMap, perimeterHues, totalPixels);
+	try {
+		const { vibrantMap, dominantMap, perimeterHues, totalPixels } = samplePixels(canvas, ctx);
+		if (totalPixels > 0) {
+			vibrantColor = findBestColor(vibrantMap, dominantMap, perimeterHues, totalPixels);
+
+			const vibrantBuckets = Array.from(vibrantMap.values())
+				.map((bucket) => {
+					const avgR = Math.round(bucket.r / bucket.count);
+					const avgG = Math.round(bucket.g / bucket.count);
+					const avgB = Math.round(bucket.b / bucket.count);
+					const avgSat = bucket.totalSat / bucket.count;
+					const avgVal = bucket.totalVal / bucket.count;
+					return {
+						avgR,
+						avgG,
+						avgB,
+						avgSat,
+						avgVal,
+						coverage: bucket.count / totalPixels,
+					};
+				})
+				.filter((bucket) => bucket.coverage >= 0.01)
+				.filter(
+					(bucket) =>
+						!(bucket.avgR < 20 && bucket.avgG < 20 && bucket.avgB < 20),
+				)
+				.sort((a, b) => {
+					const scoreA = a.avgSat * 2.5 + a.avgVal * 1.2 + a.coverage * 2.0;
+					const scoreB = b.avgSat * 2.5 + b.avgVal * 1.2 + b.coverage * 2.0;
+					return scoreB - scoreA;
+				});
+
+			const colors = vibrantBuckets
+				.slice(0, maxColors)
+				.map((bucket) => {
+					const { avgR, avgG, avgB } = bucket;
+					const hsv = rgbToHsv(avgR, avgG, avgB);
+					if (hsv.v > 0.9) {
+						const toned = hsvToRgb(hsv.h, Math.min(hsv.s * 0.95, 1), 0.9);
+						return `rgb(${toned.r}, ${toned.g}, ${toned.b})`;
+					}
+					return `rgb(${avgR}, ${avgG}, ${avgB})`;
+				});
+
+			if (colors.length > 0) {
+				paletteColors = colors.map((color) => softenColor(color, 0.78, 0.95));
+			} else {
+				const fallback = Array.from(dominantMap.values())
+					.sort((a, b) => b.count - a.count)
+					.slice(0, maxColors)
+					.map((bucket) => {
+						const avgR = Math.round(bucket.r / bucket.count);
+						const avgG = Math.round(bucket.g / bucket.count);
+						const avgB = Math.round(bucket.b / bucket.count);
+						return softenColor(`rgb(${avgR}, ${avgG}, ${avgB})`, 0.78, 0.95);
+					});
+				if (fallback.length > 0) {
+					paletteColors = fallback;
+				}
+			}
+		}
+	} finally {
+		// Zero canvas immediately so Blink/Chromium reclaims backing GPU surface without waiting for GC
+		canvas.width = 0;
+		canvas.height = 0;
+	}
+
+	return { colour: vibrantColor, palette: paletteColors };
+}
+
+export function retrieveCoverArtVibrant(imageElement: HTMLImageElement): string {
+	return retrieveCoverArtDataUnified(imageElement).colour;
 }
 
 export function retrieveCoverArtPalette(
 	imageElement: HTMLImageElement,
 	maxColors = 7,
 ): string[] {
-	const canvasData = prepareCanvas(imageElement);
-	if (!canvasData) return ["rgb(255, 255, 255)"];
-
-	const { canvas, ctx } = canvasData;
-	const { vibrantMap, dominantMap, totalPixels } = samplePixels(canvas, ctx);
-	if (totalPixels <= 0) return ["rgb(255, 255, 255)"];
-
-	const vibrantBuckets = Array.from(vibrantMap.values())
-		.map((bucket) => {
-			const avgR = Math.round(bucket.r / bucket.count);
-			const avgG = Math.round(bucket.g / bucket.count);
-			const avgB = Math.round(bucket.b / bucket.count);
-			const avgSat = bucket.totalSat / bucket.count;
-			const avgVal = bucket.totalVal / bucket.count;
-			return {
-				avgR,
-				avgG,
-				avgB,
-				avgSat,
-				avgVal,
-				coverage: bucket.count / totalPixels,
-			};
-		})
-		.filter((bucket) => bucket.coverage >= 0.01)
-		.filter(
-			(bucket) =>
-				!(bucket.avgR < 20 && bucket.avgG < 20 && bucket.avgB < 20),
-		)
-		.sort((a, b) => {
-			const scoreA = a.avgSat * 2.5 + a.avgVal * 1.2 + a.coverage * 2.0;
-			const scoreB = b.avgSat * 2.5 + b.avgVal * 1.2 + b.coverage * 2.0;
-			return scoreB - scoreA;
-		});
-
-	const colors = vibrantBuckets
-		.slice(0, maxColors)
-		.map((bucket) => {
-			const { avgR, avgG, avgB } = bucket;
-			const hsv = rgbToHsv(avgR, avgG, avgB);
-			if (hsv.v > 0.9) {
-				const toned = hsvToRgb(hsv.h, Math.min(hsv.s * 0.95, 1), 0.9);
-				return `rgb(${toned.r}, ${toned.g}, ${toned.b})`;
-			}
-			return `rgb(${avgR}, ${avgG}, ${avgB})`;
-		});
-
-	if (colors.length > 0) {
-		return colors.map((color) => softenColor(color, 0.78, 0.95));
-	}
-
-	const fallback = Array.from(dominantMap.values())
-		.sort((a, b) => b.count - a.count)
-		.slice(0, maxColors)
-		.map((bucket) => {
-			const avgR = Math.round(bucket.r / bucket.count);
-			const avgG = Math.round(bucket.g / bucket.count);
-			const avgB = Math.round(bucket.b / bucket.count);
-			return softenColor(`rgb(${avgR}, ${avgG}, ${avgB})`, 0.78, 0.95);
-		});
-
-	return fallback.length > 0 ? fallback : ["rgb(255, 255, 255)"];
+	return retrieveCoverArtDataUnified(imageElement, maxColors).palette;
 }
 
 export const bruh = <T>(obj: T): T => {

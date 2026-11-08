@@ -76,6 +76,7 @@ The internal visualiser supports the following options (defaults shown):
 - `showStats` (boolean) — default `false`
 - `showStatus` (boolean) — default `false`
 - `zIndex` (number) — default `-3`
+- `colorSaturation` (number 0..3) — default `1` (multiplier for visual effects saturation)
 
 To change options, edit the code that instantiates the visualiser in [src/index.ts](src/index.ts).
 

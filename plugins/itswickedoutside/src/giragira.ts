@@ -9,17 +9,27 @@ import {
 	retrieveCoverArt,
 	retrieveCoverArtVibrant,
 	retrieveCoverArtPalette,
+	retrieveCoverArtDataUnified,
 } from "./ui-interface";
 
 export interface AudioAnalysis {
 	bass?: {
-		strongest: {
+		strongest?: {
 			frequency: number;
 			magnitude: number;
 		};
 		average: number;
 		max: number;
 		frequency: number;
+	};
+	energy?: number;
+	treble?: {
+		average: number;
+		max: number;
+		strongest?: {
+			frequency: number;
+			magnitude: number;
+		};
 	};
 	bpm?: number;
 	utime?: number | bigint;
@@ -36,6 +46,7 @@ export interface AudioVisualiserOptions {
 	zIndex?: number;
 	isNowPlayingVisible?: boolean;
 	intensityMultiplier?: number;
+	colorSaturation?: number;
 	useDynamicLerp?: boolean;
 	useDynamicIntensity?: boolean;
 	useEnhancedBackground?: boolean;
@@ -52,23 +63,25 @@ export interface AudioVisualiserAPI {
 	togglePause: (pause: boolean) => void;
 	deviceChanged: (deviceId: string) => void;
 	setIntensityMultiplier?: (mult: number) => void;
+	setColorSaturation?: (saturation: number) => void;
 	setDynamicLerpEnabled?: (enabled: boolean) => void;
 	setDynamicIntensityEnabled?: (enabled: boolean) => void;
 	setEnhancedBackground?: (enabled: boolean) => void;
 	setBackgroundMode?: (mode: 'circles' | 'images') => void;
 	setApolMusicWannabeEnabled?: (enabled: boolean) => void;
 	refreshAtmosphereCircles?: () => void;
+	updateCoverArt?: (coverUrl?: string) => Promise<void>;
 }
 
 // Detects sudden bass intensity spikes for genres with dynamic bass emphasis
 class BassSpikeDetector {
 	private bassHistory: number[] = [];
 	private readonly historySize = 20; // ~1 second at 20fps
-	private spikeThreshold = 0.4; // How much above average to trigger
+	private spikeThreshold = 0.32; // How much above average to trigger
 	private spikeCooldown = 0; // Frames to wait before detecting another spike
-	private readonly maxCooldown = 60; // 3 seconds at 20fps
+	private readonly maxCooldown = 5; // ~115ms cooldown (allows detecting 170+ BPM kicks & syncopations)
 	private currentSpikeLevel = 0;
-	private spikeDecayRate = 0.95;
+	private spikeDecayRate = 0.88;
 
 	addBassReading(bassIntensity: number): void {
 		// Add to history
@@ -93,10 +106,13 @@ class BassSpikeDetector {
 				
 				// Calculate how much the recent readings exceed the baseline
 				const spikeRatio = recentAvg / Math.max(olderAvg, 0.01);
-				
-				if (spikeRatio > (1 + this.spikeThreshold)) {
+				const delta = recentAvg - olderAvg;
+
+				// Trigger either on ratio (electronic kicks from silence)
+				// or on delta (heavy continuous or fast uptempo kicks that ride on top of a sustained floor)
+				if (spikeRatio > (1 + this.spikeThreshold) || (olderAvg > 0.16 && delta > 0.07)) {
 					// Spike detected! Set spike level based on intensity
-					this.currentSpikeLevel = Math.min(1.0, (spikeRatio - 1) * 0.5);
+					this.currentSpikeLevel = Math.min(1.0, Math.max((spikeRatio - 1) * 0.5, delta * 2.8));
 					this.spikeCooldown = this.maxCooldown;
 				}
 			}
@@ -107,8 +123,8 @@ class BassSpikeDetector {
 	}
 
 	getSpikeMultiplier(): number {
-		// Return 1.0 + spike boost (up to 2.0x intensity)
-		return 1.0 + (this.currentSpikeLevel * 1.0);
+		// Gentle spike boost (up to 1.2x instead of 2.0x to avoid harshness on heavy drops)
+		return 1.0 + (this.currentSpikeLevel * 0.2);
 	}
 
 	getSpikeLevel(): number {
@@ -119,6 +135,203 @@ class BassSpikeDetector {
 		this.bassHistory = [];
 		this.spikeCooldown = 0;
 		this.currentSpikeLevel = 0;
+	}
+}
+
+// Tracks running baseline floor and ceiling to extract transients from continuous heavy bass (e.g. rock)
+export class AdaptiveBassTracker {
+	private baselineFloor: number = 0;
+	private baselineCeiling: number = 0.5;
+	private lastIntensity: number = 0;
+	private smoothedOutput: number = 0;
+	private readonly floorRiseRate: number = 0.005; // Slow rise when bass is continuous (~2-3 sec)
+	private readonly floorFallRate: number = 0.08;  // Fast drop when bass stops (~120-150ms)
+	private readonly ceilingDecayRate: number = 0.005;
+	public isSustainedBass: boolean = false;
+
+	process(rawIntensity: number): number {
+		// Track the running floor (the sustained bass component)
+		if (rawIntensity < this.baselineFloor) {
+			this.baselineFloor += (rawIntensity - this.baselineFloor) * this.floorFallRate;
+		} else {
+			this.baselineFloor += (rawIntensity - this.baselineFloor) * this.floorRiseRate;
+		}
+
+		// Track running ceiling
+		if (rawIntensity > this.baselineCeiling) {
+			this.baselineCeiling = rawIntensity;
+		} else {
+			this.baselineCeiling += (rawIntensity - this.baselineCeiling) * this.ceilingDecayRate;
+		}
+		this.baselineCeiling = Math.max(this.baselineCeiling, this.baselineFloor + 0.12);
+
+		// Detect sustained heavy bass (when baseline floor is elevated)
+		this.isSustainedBass = this.baselineFloor > 0.22;
+
+		// Dynamic range between floor and ceiling
+		const dynamicRange = Math.max(0.12, this.baselineCeiling - this.baselineFloor);
+
+		// Transient extraction: how much does this moment exceed the sustained baseline floor?
+		const transient = Math.max(0, rawIntensity - this.baselineFloor) / dynamicRange;
+
+		// Onset: detect sudden rise (attack of drums/guitar hit)
+		const onset = Math.max(0, rawIntensity - this.lastIntensity);
+		this.lastIntensity = rawIntensity;
+
+		let punch: number;
+		if (this.isSustainedBass) {
+			// Continuous heavy bass (rock, metal):
+			// Base the visual on the transient punch above the continuous floor
+			punch = transient * 0.7 + onset * 0.4 + rawIntensity * 0.2;
+		} else {
+			// Electronic / synthpop / dance bursts:
+			// Combine steady energy with transient kick attack so fast tempos cut through cleanly
+			punch = Math.max(rawIntensity * 0.9, transient * 0.85 + onset * 0.35);
+		}
+
+		const clamped = Math.min(1.0, Math.max(0, punch));
+		this.smoothedOutput += (clamped - this.smoothedOutput) * 0.42;
+		return this.smoothedOutput;
+	}
+
+	reset(): void {
+		this.baselineFloor = 0;
+		this.baselineCeiling = 0.5;
+		this.lastIntensity = 0;
+		this.smoothedOutput = 0;
+		this.isSustainedBass = false;
+	}
+}
+
+// Closed-form critically damped harmonic spring solver (Unity SmoothDamp / iOS CoreAnimation spring curve)
+// Mathematically guaranteed: zero oscillation, zero overshoot, zero harsh jerk, perfectly smooth C^inf trajectory
+export class DampedSpring {
+	public value: number = 0;
+	public velocity: number = 0;
+	public target: number = 0;
+	private smoothTime: number;
+
+	constructor(smoothTime = 0.08) {
+		this.smoothTime = smoothTime;
+	}
+
+	setTarget(target: number): void {
+		this.target = target;
+	}
+
+	setSmoothTime(smoothTime: number): void {
+		this.smoothTime = Math.max(0.035, Math.min(0.25, smoothTime));
+	}
+
+	// Backwards compatibility if setParameters is invoked
+	setParameters(stiffness: number, damping: number): void {
+		if (stiffness > 0) {
+			this.setSmoothTime(2 / Math.sqrt(stiffness));
+		}
+	}
+
+	update(dt: number): number {
+		const clampedDt = Math.max(0.001, Math.min(dt, 0.05));
+		const omega = 2 / Math.max(0.001, this.smoothTime);
+		const x = omega * clampedDt;
+		// 4th order rational approximation of exp(-omega * dt)
+		const exp = 1 / (1 + x + 0.48 * x * x + 0.235 * x * x * x);
+		
+		const change = this.value - this.target;
+		const temp = (this.velocity + omega * change) * clampedDt;
+		
+		this.velocity = (this.velocity - omega * temp) * exp;
+		this.value = this.target + (change + temp) * exp;
+
+		return this.value;
+	}
+
+	snap(val: number): void {
+		this.value = val;
+		this.velocity = 0;
+		this.target = val;
+	}
+
+	reset(): void {
+		this.value = 0;
+		this.velocity = 0;
+		this.target = 0;
+	}
+}
+
+// Multi-band dynamics engine: analytical smooth-damp solvers for Bass, Treble, and Broadband Energy
+export class AudioDynamicsEngine {
+	public bassSpring = new DampedSpring(0.078);   // Responsive bass punch with silky organic recovery
+	public energySpring = new DampedSpring(0.14);  // Smooth, luminous broadband energy
+	public trebleSpring = new DampedSpring(0.085); // Gentle transient shimmer for cymbals/hi-hats
+
+	public fluidPhase: number = 0;
+	public currentBPM: number = 120;
+
+	setBPM(bpm: number): void {
+		if (!bpm || bpm <= 0) return;
+		this.currentBPM = bpm;
+
+		// Adapt smoothTime gracefully based on tempo:
+		// At 80 BPM: ~0.095s (deep, slow breathing)
+		// At 120 BPM: 0.078s (standard punch)
+		// At 169 BPM (e.g. weathergirl): 0.056s (cleanly tracks consecutive 177ms eighth-note kicks with zero jitter!)
+		const bpmScale = Math.max(0.75, Math.min(1.8, bpm / 120));
+		this.bassSpring.setSmoothTime(0.078 / bpmScale);
+		this.trebleSpring.setSmoothTime(0.085 / bpmScale);
+		this.energySpring.setSmoothTime(0.13 / bpmScale);
+	}
+
+	updateAudio(analysis: AudioAnalysis, trackedBassIntensity: number, intensityMultiplier = 1): void {
+		if (analysis.bpm) {
+			this.setBPM(analysis.bpm);
+		}
+
+		// 1. Bass Target with gentle soft-knee compression
+		const rawBass = trackedBassIntensity * (intensityMultiplier * 0.5);
+		const compressedBass = rawBass <= 0.75
+			? rawBass
+			: 0.75 + Math.tanh((rawBass - 0.75) * 0.5) * 0.3;
+		
+		const targetBass = Math.min(1.05, compressedBass);
+		this.bassSpring.setTarget(targetBass);
+
+		// 2. Broadband Energy Target
+		const rawEnergy = typeof analysis.energy === 'number' ? analysis.energy : 0.3;
+		const energyTarget = Math.min(1.0, Math.max(0.1, rawEnergy * 1.1));
+		this.energySpring.setTarget(energyTarget);
+
+		// 3. Treble Target (hi-hats, cymbals, snare snap, vocaloid air)
+		const trebleAvg = analysis.treble?.average ?? 0;
+		const trebleMag = analysis.treble?.strongest?.magnitude ?? 0;
+		const rawTreble = Math.min(1.0, trebleAvg * 60000 + trebleMag * 70);
+		this.trebleSpring.setTarget(rawTreble);
+	}
+
+	updatePhysics(dt: number): {
+		bass: number;
+		energy: number;
+		treble: number;
+		fluidPhase: number;
+	} {
+		const bass = Math.max(0, this.bassSpring.update(dt));
+		const energy = Math.max(0, this.energySpring.update(dt));
+		const treble = Math.max(0, this.trebleSpring.update(dt));
+
+		// Fluid phase velocity: gentle, organic floating drift
+		const bpmTempoFactor = Math.max(0.85, Math.min(1.35, this.currentBPM / 120));
+		const phaseSpeed = (0.32 + energy * 0.35 + treble * 0.15) * bpmTempoFactor;
+		this.fluidPhase += dt * phaseSpeed;
+
+		return { bass, energy, treble, fluidPhase: this.fluidPhase };
+	}
+
+	reset(): void {
+		this.bassSpring.reset();
+		this.energySpring.reset();
+		this.trebleSpring.reset();
+		this.fluidPhase = 0;
+		this.currentBPM = 120;
 	}
 }
 
@@ -139,18 +352,19 @@ class DynamicIntensityController {
 		const bass = analysis.bass;
 		if (!bass) return 0;
 
-		// Only real bass lives between 20-150Hz, everything else is just noise
-		const isRealBass = bass.frequency >= 20 && bass.frequency <= 150;
-		const bassFreqFactor = isRealBass ? 1.0 : Math.max(0, 1 - (bass.frequency - 150) / 100);
+		// Broaden bass frequency range to 20-220Hz (accommodates rock bass guitar fundamentals & harmonics)
+		const isRealBass = bass.frequency >= 20 && bass.frequency <= 200;
+		const bassFreqFactor = isRealBass ? 1.0 : Math.max(0.2, 1 - (bass.frequency - 200) / 100);
 		
 		// When we get real bass, crank it up based on how thick it feels
 		// Higher multiplier for fast-changing bass (DnB style)
+		const bassMag = bass.strongest?.magnitude ?? 0;
 		const rawBassPresence = isRealBass 
-			? Math.min(bass.average * 18000, 1) * (1 + bass.strongest.magnitude * 4)
-			: Math.min(bass.average * 8000, 1);
+			? Math.min(bass.average * 18000, 1) * (1 + Math.min(1.2, bassMag * 120))
+			: Math.min(bass.average * 12000, 1) * (1 + Math.min(0.8, bassMag * 60));
 		
 		const freqSpread = Math.min(bass.frequency / 200, 1);
-		const magnitudeStrength = Math.min(bass.strongest.magnitude * 140, 1);  // More sensitive
+		const magnitudeStrength = Math.min(bassMag * 140, 1);  // More sensitive
 
 		// Smooth it out with momentum to prevent jittery jumps
 		const effectiveSmoothing = isRealBass ? this.smoothingFactor : this.decaySmoothingFactor;
@@ -183,15 +397,15 @@ class DynamicIntensityController {
 
 // Adapts smoothing based on the BPM and tempo of the track
 class DynamicLerpController {
-	private currentLerp: number = 0.5;
-	private targetLerp: number = 0.5;
-	private lerpTransitionSpeed: number = 0.05;
+	private currentLerp: number = 0.32;
+	private targetLerp: number = 0.32;
+	private lerpTransitionSpeed: number = 0.08; // Smooth, continuous adaptation without jarring steps
 
 	private config = {
 		bpmMin: 60,
-		bpmMax: 200,  // Extended for high-BPM genres like DnB
-		lerpMin: 0.2,  // More reactive minimum
-		lerpMax: 0.8,
+		bpmMax: 200,
+		lerpMin: 0.22,
+		lerpMax: 0.40,
 		curve: 'exponential' as 'linear' | 'exponential' | 'logarithmic'
 	};
 
@@ -202,35 +416,20 @@ class DynamicLerpController {
 	}
 
 	calculateBPMLerp(bpm: number): number {
-		const { bpmMin, bpmMax, lerpMin, lerpMax, curve } = this.config;
-		const normalizedBPM = Math.min(Math.max((bpm - bpmMin) / (bpmMax - bpmMin), 0), 1);
+		// Continuous, silky tempo response: scales musically with BPM
+		// At 60-100 BPM: 0.22-0.26 (smooth and floating)
+		// At 140-180+ BPM (weathergirl, synthpop): 0.32-0.38 (crisp, musical, distinct beats without twitching)
+		const clampedBpm = Math.max(60, Math.min(210, bpm));
+		const tempoAgility = (clampedBpm - 60) / 150;
+		const curveFactor = Math.pow(tempoAgility, 0.9);
 
-		let curveFactor: number;
-		switch (curve) {
-			case 'exponential':
-				// For high BPM (DnB territory), become more reactive, not more smooth
-				if (normalizedBPM > 0.8) {  // BPM > 172
-					// Invert the curve for very high BPM - become more reactive
-					const highBPMFactor = (normalizedBPM - 0.8) / 0.2;  // 0 to 1 for BPM 172-200
-					curveFactor = 0.8 - highBPMFactor * 0.4;  // Drop from 0.8 to 0.4
-				} else {
-					curveFactor = Math.pow(normalizedBPM, 1.5);
-				}
-				break;
-			case 'logarithmic':
-				curveFactor = Math.log1p(normalizedBPM * 9) / Math.log(10);
-				break;
-			case 'linear':
-			default:
-				curveFactor = normalizedBPM;
-		}
-
-		return lerpMin + (lerpMax - lerpMin) * curveFactor;
+		return this.config.lerpMin + (this.config.lerpMax - this.config.lerpMin) * curveFactor;
 	}
 
 	update(targetLerp: number, deltaTime: number = 1 / 60): number {
 		this.targetLerp = targetLerp;
-		this.currentLerp += (this.targetLerp - this.currentLerp) * this.lerpTransitionSpeed;
+		const speed = 1 - Math.pow(1 - this.lerpTransitionSpeed, Math.min(deltaTime * 60, 3));
+		this.currentLerp += (this.targetLerp - this.currentLerp) * speed;
 		return this.currentLerp;
 	}
 
@@ -270,7 +469,7 @@ class SongAdaptationController {
 		this.analysisHistory.push({
 			intensity: currentIntensity,
 			frequency: analysis.bass?.frequency ?? 100,
-			magnitude: analysis.bass?.strongest.magnitude ?? 0,
+			magnitude: analysis.bass?.strongest?.magnitude ?? 0,
 			bpm: analysis.bpm ?? 120,
 			spikeLevel: spikeLevel,
 			timestamp: now,
@@ -359,6 +558,10 @@ class SongAdaptationController {
 		return this.energyTrend;
 	}
 
+	getAverageBPM(): number {
+		return this.averageBPM || 120;
+	}
+
 	// Different songs need different transition vibes
 	getSmoothnessFactor(): number {
 		// Wild energy swings? Make transitions dreamy
@@ -370,26 +573,25 @@ class SongAdaptationController {
 
 	// Keep the intensity from getting too crazy on bouncy tracks
 	getAdaptiveIntensityMultiplier(): number {
-		// High-BPM tracks (DnB, etc.) need full intensity even with variability
-		const isHighBPM = this.averageBPM > 160;
+		// High-BPM tracks (weathergirl, DnB, uptempo synthpop) need full intensity and agile dynamics
+		const isHighBPM = this.averageBPM > 140;
 		
 		if (isHighBPM) {
-			// High BPM tracks get full intensity, maybe even a boost
-			let multiplier = Math.min(1.2, 1.0 + (this.averageBPM - 160) * 0.005);
+			let multiplier = Math.min(1.25, 1.0 + (this.averageBPM - 140) * 0.005);
 			
 			// If bass spikes are common, boost intensity even more for those moments
-			if (this.bassSpikeFrequency > 0.3) {
-				multiplier *= 1.0 + (this.bassSpikeFrequency - 0.3) * 0.5;
+			if (this.bassSpikeFrequency > 0.25) {
+				multiplier *= 1.0 + (this.bassSpikeFrequency - 0.25) * 0.45;
 			}
 			
 			return multiplier;
 		}
 		
-		// Variable stuff doesn't need exaggeration
-		// Steady stuff can handle drama
+		// For variable tracks (like rock, prog, syncopated beats):
+		// Do NOT penalize variability! Instead, give dynamic rock tracks a healthy punch
 		const baseMultiplier = 1.0;
-		const variabilityCompensation = (1 - this.consistencyFactor) * 0.3;
-		return baseMultiplier - variabilityCompensation;
+		const variabilityBoost = this.variability * 0.2;
+		return Math.min(1.2, baseMultiplier + variabilityBoost);
 	}
 
 	reset(): void {
@@ -436,12 +638,19 @@ export class AudioVisualiser implements AudioVisualiserAPI {
 	private dynamicIntensityController: DynamicIntensityController;
 	private songAdaptationController: SongAdaptationController;
 	private bassSpikeDetector: BassSpikeDetector;
+	private adaptiveBassTracker: AdaptiveBassTracker;
+	private dynamicsEngine: AudioDynamicsEngine;
 	private lastUpdateTime: number = 0;
 	private updateIntervalMs: number = 0; // 0 = uncapped, use requestAnimationFrame
 	private animationFrameId: number | null = null;
 	private pendingAudioData: AudioAnalysis | null = null;
 	private cachedVignetteColour: string = "255, 255, 255";
+	private lastAppliedVignetteColour: string = '';
+	private lastAppliedVignetteSize: number = -1;
+	private lastAppliedGlowColour: string = '';
 	private lastCoverUrl: string | null = null;
+	private lastCoverCheckTime: number = 0;
+	private currentAppliedCoverUrl: string | null = '__init__';
 	private cachedAtmospherePalette: string[] = [];
 	private imageCache: Map<string, { colour: string; palette: string[]; timestamp: number }> = new Map();
 	private readonly CACHE_TTL = 300000; // 5 minutes
@@ -453,12 +662,14 @@ export class AudioVisualiser implements AudioVisualiserAPI {
 		baseY: number;
 		size: number;
 		reactToBass: boolean;
+		reactToTreble?: boolean;
+		harmonicRatioX?: number;
+		harmonicRatioY?: number;
 		offsetX: number;
 		offsetY: number;
 		staticCorner?: boolean;
 		inUse: boolean;
 	}> = [];
-	private circlePool: HTMLElement[] = [];
 
 	// Set up the whole visualizer
 	constructor(
@@ -470,11 +681,12 @@ export class AudioVisualiser implements AudioVisualiserAPI {
 			autoReconnect: true,
 			maxReconnectAttempts: 5,
 			reconnectDelay: 2000,
-			lerpFactor: 0.5,
+			lerpFactor: 0.35,
 			showStats: false,
 			showStatus: false,
 			zIndex: 0,
 			intensityMultiplier: 1,
+			colorSaturation: 1,
 			useDynamicLerp: true,
 			useDynamicIntensity: false,
 			isNowPlayingVisible: false,
@@ -485,17 +697,19 @@ export class AudioVisualiser implements AudioVisualiserAPI {
 		};
 
 		this.lerpController = new DynamicLerpController({
-			bpmMin: 80,
-			bpmMax: 200,  // Extended for high-BPM genres
-			lerpMin: 0.2,  // More reactive minimum
-			lerpMax: 0.8,
+			bpmMin: 70,
+			bpmMax: 210,
+			lerpMin: 0.22,
+			lerpMax: 0.40,
 			curve: 'exponential'
 		});
 
-		this.lerpController.setTransitionSpeed(0.1);
+		this.lerpController.setTransitionSpeed(0.08);
 		this.dynamicIntensityController = new DynamicIntensityController();
 		this.songAdaptationController = new SongAdaptationController();
 		this.bassSpikeDetector = new BassSpikeDetector();
+		this.adaptiveBassTracker = new AdaptiveBassTracker();
+		this.dynamicsEngine = new AudioDynamicsEngine();
 
 		this.container = this.resolveContainer(containerSelector);
 		this.ensureContainerPosition();
@@ -503,6 +717,9 @@ export class AudioVisualiser implements AudioVisualiserAPI {
 		this.atmosphereLayer = this.createAtmosphereLayer();
 		this.elements = this.createDOMStructure();
 		this.atmosphereLayer.style.opacity = this.options.useEnhancedBackground ? '1' : '0';
+		document.addEventListener('visibilitychange', this.onVisibilityChange);
+		this.startMemorySweep();
+		this.updateCoverArt();
 		this.connect();
 	}
 
@@ -559,7 +776,8 @@ export class AudioVisualiser implements AudioVisualiserAPI {
             width: 100% !important;
             height: 100% !important;
             pointer-events: none !important;
-            transition: background 0.08s ease-out !important;
+            will-change: opacity !important;
+            opacity: 0 !important;
         `;
 
 		const vignette = document.createElement('div');
@@ -571,7 +789,7 @@ export class AudioVisualiser implements AudioVisualiserAPI {
             height: 100% !important;
             pointer-events: none !important;
             opacity: 0.2 !important;
-            transition: box-shadow 0.08s cubic-bezier(0.4, 0.0, 0.2, 1) !important;
+            will-change: opacity !important;
         `;
 
 		const pulseRing = document.createElement('div');
@@ -583,9 +801,9 @@ export class AudioVisualiser implements AudioVisualiserAPI {
             width: 300px !important;
             height: 300px !important;
             border-radius: 50% !important;
-            transition: all 0.08s ease-out !important;
             opacity: 0 !important;
             pointer-events: none !important;
+            will-change: transform, opacity !important;
         `;
 
 		const status = document.createElement('div');
@@ -757,6 +975,16 @@ export class AudioVisualiser implements AudioVisualiserAPI {
 		return color;
 	}
 
+	private applySaturationToRgb(rgbString: string, saturation: number): string {
+		if (saturation === 1) return rgbString;
+		const match = rgbString.match(/(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/);
+		if (!match) return rgbString;
+		const { h, s, v } = this.rgbToHsv(Number(match[1]), Number(match[2]), Number(match[3]));
+		const targetS = Math.min(Math.max(s * saturation, 0), 1);
+		const rgb = this.hsvToRgb(h, targetS, v);
+		return `${rgb.r}, ${rgb.g}, ${rgb.b}`;
+	}
+
 	private toneDownCircleColor(color: string): string {
 		const match = color.match(/rgb\s*\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)/i);
 		if (!match) return color;
@@ -765,7 +993,7 @@ export class AudioVisualiser implements AudioVisualiserAPI {
 		const b = Number(match[3]);
 		const { h, s, v } = this.rgbToHsv(r, g, b);
 
-		const targetS = Math.min(s, 0.96);
+		const targetS = Math.min(s * (this.options.colorSaturation ?? 1), 0.98);
 		const saturationBoost = 2 - targetS; // less saturated colors can stay brighter
 		const brightnessScale = 2 - targetS * 0.32; // more saturated colors are dimmed more
 		const rawV = v * brightnessScale + saturationBoost * 0.18;
@@ -778,11 +1006,27 @@ export class AudioVisualiser implements AudioVisualiserAPI {
 		return `rgb(${toned.r}, ${toned.g}, ${toned.b})`;
 	}
 
+	private generateHarmonicPalette(baseColor: string): string[] {
+		const match = baseColor.match(/(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/);
+		if (!match) return [baseColor];
+		const { h, s, v } = this.rgbToHsv(Number(match[1]), Number(match[2]), Number(match[3]));
+		// Analogous (+28°), complementary (+175°), and triadic accent (+325°)
+		const c1 = this.hsvToRgb((h + 28) % 360, Math.min(s * 0.9, 0.9), Math.max(v * 0.85, 0.4));
+		const c2 = this.hsvToRgb((h + 175) % 360, Math.min(s * 0.75, 0.85), Math.max(v * 0.75, 0.35));
+		const c3 = this.hsvToRgb((h + 325) % 360, Math.min(s * 0.95, 0.95), Math.max(v * 0.9, 0.45));
+		return [
+			baseColor,
+			`rgb(${c1.r}, ${c1.g}, ${c1.b})`,
+			`rgb(${c2.r}, ${c2.g}, ${c2.b})`,
+			`rgb(${c3.r}, ${c3.g}, ${c3.b})`,
+		];
+	}
+
 	private createRadialCircleGradient(primaryColor: string, accentColor?: string): string {
 		const accent = accentColor ? this.toneDownCircleColor(accentColor) : primaryColor;
-		const positionX = 30 + Math.random() * 40;
-		const positionY = 30 + Math.random() * 40;
-		return `radial-gradient(circle at ${positionX}% ${positionY}%, ${primaryColor} 0%, ${primaryColor} 26%, ${accent} 30%, ${accent} 34%, rgba(0, 0, 0, 0.08) 36%, transparent 44%)`;
+		const positionX = 35 + Math.random() * 30;
+		const positionY = 35 + Math.random() * 30;
+		return `radial-gradient(circle at ${positionX}% ${positionY}%, ${primaryColor} 0%, ${accent} 42%, transparent 72%)`;
 	}
 
 	private createCoverFragmentBackground(coverUrl: string | null, primaryColor: string, accentColor?: string): string {
@@ -807,6 +1051,9 @@ export class AudioVisualiser implements AudioVisualiserAPI {
 
 	private updateAtmosphereLayerBackground(coverUrl: string | null): void {
 		if (!this.atmosphereLayer) return;
+		if (this.currentAppliedCoverUrl === coverUrl) return;
+		this.currentAppliedCoverUrl = coverUrl;
+
 		if (coverUrl && this.options.backgroundMode === 'images') {
 			this.atmosphereLayer.style.backgroundImage = `url("${coverUrl}")`;
 			this.atmosphereLayer.style.backgroundSize = '150% 150%';
@@ -839,6 +1086,9 @@ export class AudioVisualiser implements AudioVisualiserAPI {
 			palette: [],
 		};
 
+		let blobUrl: string | null = null;
+		let tempImg: HTMLImageElement | null = null;
+
 		try {
 			const response = await fetch(coverUrl, {
 				mode: 'cors',
@@ -850,21 +1100,38 @@ export class AudioVisualiser implements AudioVisualiserAPI {
 			}
 
 			const blob = await response.blob();
-			const blobUrl = URL.createObjectURL(blob);
-			const tempImg = new Image();
+			blobUrl = URL.createObjectURL(blob);
+			tempImg = new Image();
 
 			await new Promise<void>((resolve, reject) => {
+				if (!tempImg) return reject();
 				tempImg.onload = () => resolve();
 				tempImg.onerror = reject;
-				tempImg.src = blobUrl;
+				tempImg.src = blobUrl!;
 			});
 
-			const vibrantColour = retrieveCoverArtVibrant(tempImg);
-			result.colour = vibrantColour;
-			result.palette = [this.formatRgbColor(vibrantColour)];
-			URL.revokeObjectURL(blobUrl);
+			const unified = retrieveCoverArtDataUnified(tempImg, 6);
+			result.colour = unified.colour;
+			result.palette = unified.palette && unified.palette.length > 0
+				? unified.palette.map(c => this.formatRgbColor(c))
+				: [this.formatRgbColor(unified.colour)];
 		} catch (error) {
 			console.error('[reactivo] Error fetching cover art data:', error);
+		} finally {
+			if (blobUrl) {
+				URL.revokeObjectURL(blobUrl);
+			}
+			if (tempImg) {
+				tempImg.onload = null;
+				tempImg.onerror = null;
+				tempImg.src = ''; // Immediately free decoded bitmap memory
+			}
+		}
+
+		// Cap imageCache to max 30 entries (LRU-like eviction) to prevent long-session memory leaks
+		if (this.imageCache.size >= 30) {
+			const oldestKey = this.imageCache.keys().next().value;
+			if (oldestKey) this.imageCache.delete(oldestKey);
 		}
 
 		// Remember it for next time
@@ -880,25 +1147,23 @@ export class AudioVisualiser implements AudioVisualiserAPI {
 	}
 
 	private createAtmosphereLayer(): HTMLElement {
-		let targetBlur = DataStoreService.backgroundMode === 'images' ? 45 : 100;
-		
-		// Use the instance property instead of the imported variable
-		const isApolMode = this.apolMusicWannabeEnabled || false;
+		let targetBlur = DataStoreService.backgroundMode === 'images' ? 35 : 48;
 		
 		const layer = document.createElement('div');
 		layer.style.cssText = `
         position: absolute !important;
-        top: ${isApolMode ? "50%" : "100%"} !important;
-        left: ${isApolMode ? "105%" : "50%"} !important;
-        width: 200% !important;
-        height: 200% !important;
-        transform: translate(-50%, -50%) !important; /* centrado */
+        top: 50% !important;
+        left: 50% !important;
+        width: 140% !important;
+        height: 140% !important;
+        transform: translate(-50%, -50%) !important;
         overflow: hidden !important;
         pointer-events: none !important;
-        filter: blur(${targetBlur}px) brightness(0.45) saturate(1) !important;
+        filter: blur(${targetBlur}px) contrast(1.12) brightness(0.52) saturate(${this.options.colorSaturation ?? 1}) !important;
         opacity: 0 !important;
         transition: opacity 0.35s ease-out !important;
         z-index: ${this.options.zIndex} !important;
+        will-change: opacity !important;
     `;
 
 		const spinner = document.createElement('div');
@@ -921,341 +1186,346 @@ export class AudioVisualiser implements AudioVisualiserAPI {
 
 	private createAtmosphereCircles(colors: string[]): void {
 		if (!this.atmosphereLayer) return;
-
-		// Fade out the old circles, we'll bring in new ones
-		this.atmosphereCircles.forEach((circle) => {
-			circle.inUse = false;
-			circle.element.style.opacity = '0';
-			circle.element.style.transition = 'opacity 0.4s ease-out !important';
-			setTimeout(() => {
-				circle.element.style.display = 'none';
-				this.circlePool.push(circle.element);
-			}, 400); // Let it finish disappearing
-		});
-		this.atmosphereCircles = [];
-
 		if (colors.length === 0) return;
 
-		// Figure out how many circles fit in this space
 		const width = this.container.offsetWidth || window.innerWidth;
 		const height = this.container.offsetHeight || window.innerHeight;
 		const minDim = Math.min(width, height);
 
-		const minCircleCount = 1;
-		const maxCircleCount = 2;
-		const areaScale = 500 * 500;
-		const areaBasedCount = Math.max(1, Math.round((width * height) / areaScale));
-		const circleCount = Math.min(
-			maxCircleCount,
-			Math.max(minCircleCount, Math.max(colors.length, areaBasedCount)),
-		);
-
+		const apolMode = this.apolMusicWannabeEnabled || (DataStoreService.apolMusicWannabeEnabled ?? false);
 		const coverUrl = this.options.backgroundMode === 'images' ? retrieveCoverArt() : null;
-		const baseColor = colors[0] ?? 'rgb(255, 255, 255)';
-		const palette = Array(circleCount).fill(baseColor);
 
-		// Check if Apol Music wannabe mode is enabled
-		const apolMode = DataStoreService.apolMusicWannabeEnabled ?? false;
-		
-		let reactiveCorner: { x: number; y: number };
+		// Ensure a rich multi-color palette from extracted cover art
+		let palette = colors.length > 0 ? [...colors] : ['rgb(255, 255, 255)'];
+		if (palette.length < 3) {
+			palette = this.generateHarmonicPalette(palette[0]);
+		}
+
+		const HARMONIC_RATIOS = [
+			{ rx: 1.0, ry: 1.25 },
+			{ rx: 1.414, ry: 0.866 },
+			{ rx: 1.732, ry: 1.618 },
+			{ rx: 2.236, ry: 1.15 },
+			{ rx: 0.707, ry: 1.414 },
+		];
+
+		// 1. Static Corner Anchor Blob
+		let staticSize: number, staticLeft: number, staticTop: number;
+		const staticColor = this.toneDownCircleColor(palette[0]);
+
 		if (apolMode) {
-			// In Apol mode, use top-right corner as the reference
-			reactiveCorner = { x: 1, y: 0 };
+			staticSize = Math.round(Math.max(minDim * 0.9, width * 0.45));
+			staticLeft = Math.round(width - staticSize * 0.75);
+			staticTop = Math.round(-staticSize * 0.2);
 		} else {
-			// Random corner for normal mode
-			const corners = [
-				{ x: 0, y: 0 },
-				{ x: 1, y: 0 },
-				{ x: 0, y: 1 },
-				{ x: 1, y: 1 },
+			staticSize = Math.round(minDim * 0.85);
+			staticLeft = Math.round(width - staticSize * 0.65);
+			staticTop = 0;
+		}
+
+		// 2. Dynamic Fluid Blobs (Multi-color mesh gradient with irrational harmonic circulation)
+		const dynamicConfigs = apolMode
+			? [
+				{
+					cx: width * 0.76,
+					cy: height * 0.32,
+					size: Math.round(minDim * 0.86),
+					reactToBass: true,
+					reactToTreble: false,
+					color: this.toneDownCircleColor(palette[1 % palette.length]),
+					accent: palette[2 % palette.length],
+				},
+				{
+					cx: width * 0.86,
+					cy: height * 0.54,
+					size: Math.round(minDim * 0.78),
+					reactToBass: true,
+					reactToTreble: true,
+					color: this.toneDownCircleColor(palette[2 % palette.length]),
+					accent: palette[3 % palette.length],
+				},
+				{
+					cx: width * 0.60,
+					cy: height * 0.20,
+					size: Math.round(minDim * 0.92),
+					reactToBass: false,
+					reactToTreble: true,
+					color: this.toneDownCircleColor(palette[3 % palette.length]),
+					accent: palette[0],
+				},
+				{
+					cx: width * 0.72,
+					cy: height * 0.44,
+					size: Math.round(minDim * 0.64),
+					reactToBass: false,
+					reactToTreble: true,
+					color: this.toneDownCircleColor(palette[4 % palette.length] ?? palette[1 % palette.length]),
+					accent: palette[1 % palette.length],
+				},
+			]
+			: [
+				{
+					cx: width * 0.28,
+					cy: height * 0.42,
+					size: Math.round(minDim * 0.88),
+					reactToBass: true,
+					reactToTreble: false,
+					color: this.toneDownCircleColor(palette[0]),
+					accent: palette[1 % palette.length],
+				},
+				{
+					cx: width * 0.74,
+					cy: height * 0.58,
+					size: Math.round(minDim * 0.88),
+					reactToBass: true,
+					reactToTreble: true,
+					color: this.toneDownCircleColor(palette[1 % palette.length]),
+					accent: palette[2 % palette.length],
+				},
+				{
+					cx: width * 0.50,
+					cy: height * 0.22,
+					size: Math.round(minDim * 0.78),
+					reactToBass: false,
+					reactToTreble: true,
+					color: this.toneDownCircleColor(palette[2 % palette.length]),
+					accent: palette[3 % palette.length],
+				},
+				{
+					cx: width * 0.48,
+					cy: height * 0.78,
+					size: Math.round(minDim * 0.82),
+					reactToBass: false,
+					reactToTreble: false,
+					color: this.toneDownCircleColor(palette[3 % palette.length]),
+					accent: palette[0],
+				},
+				{
+					cx: width * 0.82,
+					cy: height * 0.28,
+					size: Math.round(minDim * 0.68),
+					reactToBass: true,
+					reactToTreble: true,
+					color: this.toneDownCircleColor(palette[4 % palette.length] ?? palette[0]),
+					accent: palette[1 % palette.length],
+				},
 			];
-			reactiveCorner = corners[Math.floor(Math.random() * corners.length)];
+
+		const totalCircles = 1 + dynamicConfigs.length;
+
+		// Prune any excess elements if switching between modes
+		while (this.atmosphereCircles.length > totalCircles) {
+			const excess = this.atmosphereCircles.pop();
+			if (excess && excess.element.parentElement === this.atmosphereLayer) {
+				excess.element.remove();
+			}
 		}
-		
-		const staticColor = this.toneDownCircleColor(baseColor);
-		
-		// Static circle positioning
-		let staticSize, staticLeft, staticTop;
-		
-		if (apolMode) {
-			// In Apol mode, force top-right corner with height constraint
-			const maxHeight = height * 0.4; // Maximum 40% from top
-			const maxWidth = width * 0.35; // Maximum 35% of screen width for the size
-			
-			// Limit size to fit within constraints
-			staticSize = Math.round(Math.min(minDim * 0.8, maxWidth));
-			
-			// Force position to exact top-right corner within height limit
-			staticLeft = width - staticSize;
-			staticTop = 0; // Start exactly at the top edge
+
+		// 1. Static Anchor Circle
+		const staticBg = this.createCoverFragmentBackground(coverUrl, staticColor, palette[1 % palette.length]);
+		if (this.atmosphereCircles.length === 0) {
+			const staticCircle = document.createElement('div');
+			staticCircle.style.cssText = `
+				position: absolute !important;
+				width: ${staticSize}px !important;
+				height: ${staticSize}px !important;
+				left: ${staticLeft}px !important;
+				top: ${staticTop}px !important;
+				border-radius: 50% !important;
+				background: ${staticBg} !important;
+				opacity: 0.78 !important;
+				pointer-events: none !important;
+				mix-blend-mode: ${coverUrl ? 'normal' : 'screen'} !important;
+				transition: opacity 0.8s ease-out, background 0.8s ease-out !important;
+			`;
+			this.atmosphereLayer.appendChild(staticCircle);
+			this.atmosphereCircles.push({
+				element: staticCircle,
+				baseX: staticLeft,
+				baseY: staticTop,
+				size: staticSize,
+				reactToBass: false,
+				reactToTreble: false,
+				harmonicRatioX: 0.8,
+				harmonicRatioY: 0.7,
+				staticCorner: true,
+				offsetX: 0,
+				offsetY: 0,
+				inUse: true,
+			});
 		} else {
-			// Normal mode behavior
-			staticSize = Math.round(minDim * (0.3 + Math.random() * 1));
-			staticLeft = Math.round(reactiveCorner.x === 0 ? 0 : width - staticSize);
-			staticTop = Math.round(reactiveCorner.y === 0 ? 0 : height - staticSize);
+			// Reuse in-place without DOM allocation
+			const staticData = this.atmosphereCircles[0];
+			staticData.element.style.width = `${staticSize}px`;
+			staticData.element.style.height = `${staticSize}px`;
+			staticData.element.style.left = `${staticLeft}px`;
+			staticData.element.style.top = `${staticTop}px`;
+			staticData.element.style.background = staticBg;
+			staticData.baseX = staticLeft;
+			staticData.baseY = staticTop;
+			staticData.size = staticSize;
 		}
 
-		const staticCircle = document.createElement('div');
-		staticCircle.style.cssText = `
-            position: absolute !important;
-            width: ${staticSize}px !important;
-            height: ${staticSize}px !important;
-            left: ${staticLeft}px !important;
-            top: ${staticTop}px !important;
-            border-radius: 50% !important;
-            background: ${this.createCoverFragmentBackground(coverUrl, staticColor, palette[0] ?? staticColor)} !important;
-            opacity: 0.39 !important;
-            pointer-events: none !important;
-            mix-blend-mode: ${coverUrl ? 'normal' : 'screen'} !important;
-            filter: ${coverUrl ? 'blur(8px) contrast(1.05) saturate(1.08)' : 'none'} !important;
-        `;
-		this.atmosphereLayer.appendChild(staticCircle);
-		this.atmosphereCircles.push({
-			element: staticCircle,
-			baseX: staticLeft,
-			baseY: staticTop,
-			size: staticSize,
-			reactToBass: false,
-			staticCorner: true,
-			offsetX: 0,
-			offsetY: 0,
-			inUse: true,
-		});
+		// 2. Dynamic Blobs
+		dynamicConfigs.forEach((config, i) => {
+			const circleIdx = i + 1;
+			const jitterX = (Math.random() - 0.5) * 40;
+			const jitterY = (Math.random() - 0.5) * 40;
+			const left = Math.round(config.cx - config.size * 0.5 + jitterX);
+			const top = Math.round(config.cy - config.size * 0.5 + jitterY);
+			const harmonic = HARMONIC_RATIOS[i % HARMONIC_RATIOS.length];
+			const bg = this.createCoverFragmentBackground(coverUrl, config.color, config.accent);
 
-		const gridCols = Math.max(1, Math.round(width / 600));
-		const gridRows = Math.max(1, Math.round(height / 600));
-		const cellWidth = width / gridCols;
-		const cellHeight = height / gridRows;
-
-		const totalCircles = Math.min(areaBasedCount, gridCols * gridRows);
-
-		for (let i = 0; i < totalCircles; i++) {
-			const color = this.toneDownCircleColor(palette[i % palette.length]);
-			
-			let clampedLeft, clampedTop, targetSize;
-			
-			if (apolMode && i >= 0) {
-				// In Apol mode, ALL circles in grid start from top-right corner area
-				// Maximum height constraint: 40% of screen from top
-				const maxHeight = height * 0.4;
-				
-				// Create a compact grid starting from top-right corner
-				const rowsAvailable = Math.ceil(maxHeight / cellHeight);
-				const colsInGrid = 2; // Keep it compact on the right side
-				
-				// Calculate grid position from top-right for ALL circles (including i=0)
-				const colIndex = Math.min(i % colsInGrid, colsInGrid - 1);
-				const rowIndex = Math.min(Math.floor(i / colsInGrid), rowsAvailable - 1);
-				
-				// Position from top-right: x starts at right edge, decreases leftward
-				const rightEdge = width;
-				const centerX = rightEdge - ((colIndex + 1) * cellWidth) + cellWidth * 0.5;
-				const centerY = rowIndex * cellHeight + cellHeight * 0.5;
-				
-				const jitterX = (Math.random() - 0.5) * cellWidth * 0.4;
-				const jitterY = (Math.random() - 0.5) * cellHeight * 0.4;
-				targetSize = Math.round(Math.max(cellWidth * 0.8, cellHeight * 0.9) * (1.05 + Math.random() * 0.6));
-				
-				const left = Math.round(centerX - targetSize * 0.5 + jitterX);
-				const top = Math.round(centerY - targetSize * 0.5 + jitterY);
-				
-				// Clamp to ensure circles stay in top-right area
-				// Left boundary: circles must be in the rightmost 30% of screen
-				const maxLeft = width * 0.7; 
-				const minLeft = width - targetSize * 0.9;
-				
-				// Top boundary: within 40% height
-				const maxTop = maxHeight - targetSize * 0.9;
-				const minTop = -targetSize * 0.2;
-				
-				clampedLeft = Math.max(minLeft, Math.min(maxLeft, left));
-				clampedTop = Math.max(minTop, Math.min(maxTop, top));
-			} else {
-				// Normal mode behavior
-				const col = i % gridCols;
-				const row = Math.floor(i / gridCols);
-				
-				// Size this one up with some randomness for that organic feel
-				targetSize = Math.round(Math.max(cellWidth, cellHeight) * (1.05 + Math.random() * 1));
-				const centerX = col * cellWidth + cellWidth * 0.5;
-				const centerY = row * cellHeight + cellHeight * 0.5;
-				const jitterX = (Math.random() - 0.5) * cellWidth * 0.28;
-				const jitterY = (Math.random() - 0.5) * cellHeight * 0.28;
-				const left = Math.round(centerX - targetSize * 0.5 + jitterX);
-				const top = Math.round(centerY - targetSize * 0.5 + jitterY);
-				clampedLeft = Math.max(-targetSize * 0.25, Math.min(width - targetSize * 0.75, left));
-				clampedTop = Math.max(-targetSize * 0.25, Math.min(height - targetSize * 0.75, top));
-			}
-			
-			const circleCenterX = clampedLeft + targetSize * 0.5;
-			const circleCenterY = clampedTop + targetSize * 0.5;
-			
-			let reactToBass;
-			if (apolMode) {
-				// In Apol mode, circles closer to top-right are more reactive
-				// Top-right corner coordinates
-				const apolCornerX = width;
-				const apolCornerY = 0;
-				const apolDistance = Math.hypot(circleCenterX - apolCornerX, circleCenterY - apolCornerY);
-				const maxApodDistance = Math.hypot(width, height * 0.4); // Only consider top 40% area
-				const apolProximity = 1 - apolDistance / maxApodDistance;
-				
-				// Higher proximity = more likely to be reactive
-				reactToBass = apolProximity > 0.2 ? Math.random() < 0.85 : Math.random() < 0.3;
-			} else {
-				// Normal mode behavior
-				const cornerX = reactiveCorner.x === 0 ? 0 : width;
-				const cornerY = reactiveCorner.y === 0 ? 0 : height;
-				const distance = Math.hypot(circleCenterX - cornerX, circleCenterY - cornerY);
-				const maxDistance = Math.hypot(width, height);
-				const proximity = 1 - distance / maxDistance;
-				reactToBass = proximity > 0.3 ? Math.random() < 0.72 : Math.random() < 0.18;
-			}
-
-			// Reuse what we can, make new ones if needed
-			let circle: HTMLElement;
-			if (this.circlePool.length > 0) {
-				circle = this.circlePool.pop()!;
-				circle.style.display = 'block';
-				circle.style.opacity = '0';
-				circle.style.transition = 'opacity 0.8s ease-out, transform 0.6s ease-out !important';
-				// Let it fade back in
-				setTimeout(() => {
-					circle.style.opacity = '0.94';
-				}, i * 80);
-			} else {
-				circle = document.createElement('div');
+			if (this.atmosphereCircles.length <= circleIdx) {
+				const circle = document.createElement('div');
 				circle.style.cssText = `
-            position: absolute !important;
-            width: ${targetSize}px !important;
-            height: ${targetSize}px !important;
-            left: ${clampedLeft}px !important;
-            top: ${clampedTop}px !important;
-            border-radius: 50% !important;
-            background: ${this.createCoverFragmentBackground(coverUrl, color, palette[(i + 1) % palette.length])} !important;
-            opacity: 0 !important;
-            pointer-events: none !important;
-            mix-blend-mode: ${coverUrl ? 'normal' : 'screen'} !important;
-            filter: ${coverUrl ? 'blur(6px) contrast(1.05) saturate(1.06)' : 'none'} !important;
-            will-change: transform, opacity !important;
-            transition: opacity 0.8s ease-out, transform 0.6s ease-out !important;
-        `;
-
-				this.atmosphereLayer.appendChild(circle);
+					position: absolute !important;
+					width: ${config.size}px !important;
+					height: ${config.size}px !important;
+					left: ${left}px !important;
+					top: ${top}px !important;
+					border-radius: 50% !important;
+					background: ${bg} !important;
+					opacity: 0.94 !important;
+					pointer-events: none !important;
+					mix-blend-mode: ${coverUrl ? 'normal' : 'screen'} !important;
+					transition: opacity 0.8s ease-out, background 0.8s ease-out !important;
+				`;
+				this.atmosphereLayer!.appendChild(circle);
 				this.atmosphereCircles.push({
 					element: circle,
-					baseX: clampedLeft,
-					baseY: clampedTop,
-					size: targetSize,
-					reactToBass,
+					baseX: left,
+					baseY: top,
+					size: config.size,
+					reactToBass: config.reactToBass,
+					reactToTreble: config.reactToTreble,
+					harmonicRatioX: harmonic.rx,
+					harmonicRatioY: harmonic.ry,
 					offsetX: Math.random() * Math.PI * 2,
 					offsetY: Math.random() * Math.PI * 2,
+					staticCorner: false,
 					inUse: true,
 				});
-
-				// Bring them in one by one for a smooth cascade
-				setTimeout(() => {
-					circle.style.opacity = '0.94';
-				}, i * 80); // Staggered delay for smooth sequential appearance
+			} else {
+				// Reuse in-place without DOM allocation
+				const circleData = this.atmosphereCircles[circleIdx];
+				circleData.element.style.width = `${config.size}px`;
+				circleData.element.style.height = `${config.size}px`;
+				circleData.element.style.left = `${left}px`;
+				circleData.element.style.top = `${top}px`;
+				circleData.element.style.background = bg;
+				circleData.baseX = left;
+				circleData.baseY = top;
+				circleData.size = config.size;
+				circleData.reactToBass = config.reactToBass;
+				circleData.reactToTreble = config.reactToTreble;
+				circleData.harmonicRatioX = harmonic.rx;
+				circleData.harmonicRatioY = harmonic.ry;
 			}
-		}
+		});
 	}
 
-	private updateAtmosphereCircles(): void {
+	private updateAtmosphereCircles(dynamics?: { bass: number; energy: number; treble: number; fluidPhase: number }): void {
 		if (!this.atmosphereLayer || this.atmosphereCircles.length === 0) return;
-		const bgElements = document.querySelectorAll<HTMLElement>('[class*="_background_"]');
-	
-		bgElements.forEach(el => {
-			el.style.backgroundColor = "black";
-		});
-	
-		const currentIntensity = this.state.currentCircleIntensity;
-		const time = performance.now() * 0.0006;
+
+		const apolMode = this.apolMusicWannabeEnabled || (DataStoreService.apolMusicWannabeEnabled ?? false);
+
+		// Physics values from AudioDynamicsEngine spring solver
+		const phase = dynamics ? dynamics.fluidPhase : (performance.now() * 0.0006);
+		const bassEnergy = dynamics ? dynamics.bass : this.state.currentCircleIntensity;
+		const trebleEnergy = dynamics ? dynamics.treble : 0;
+		const broadbandEnergy = dynamics ? dynamics.energy : 0.3;
 			
 		if (this.coverSpinner && this.options.backgroundMode === 'images') {
-			const spinAngle = (performance.now() * 0.008) % 360;
-			const moveX = Math.sin(time * 0.42) * 10;
-			const moveY = Math.cos(time * 0.35) * 8;
-			const coverScale = 1 + Math.sin(time * 0.18) * 0.025;
+			const spinAngle = (phase * 80) % 360;
+			const moveX = Math.sin(phase * 0.7) * 10;
+			const moveY = Math.cos(phase * 0.6) * 8;
+			const coverScale = 1 + Math.sin(phase * 0.4) * 0.025;
 			this.coverSpinner.style.transform = `translate3d(${moveX}px, ${moveY}px, 0) rotate(${spinAngle}deg) scale(${coverScale})`;
-			this.coverSpinner.style.backgroundPosition = `${50 + Math.sin(time * 0.2) * 5}% ${50 + Math.cos(time * 0.24) * 5}%`;
+			this.coverSpinner.style.backgroundPosition = `${50 + Math.sin(phase * 0.5) * 5}% ${50 + Math.cos(phase * 0.6) * 5}%`;
 		}
 	
-		const containerWidth = this.container.offsetWidth || window.innerWidth;
-		const containerHeight = this.container.offsetHeight || window.innerHeight;
-		const maxHeight = containerHeight * 0.4; // Apol mode height constraint
-	
 		this.atmosphereCircles.forEach((circle, index) => {
-			const isStatic = !!(circle as any).staticCorner;
-			const isReactive = circle.reactToBass && !isStatic;
-				
-			// Apol mode: extreme punch effect with ultra-fast attack/release
-			const apolMode = this.apolMusicWannabeEnabled;
-						
-			const baseDrift = 12 + index * 2;
-						
-			// Get the normal motion lerp first
-			const motionLerp = this.getLerpFactor(this.state.currentCircleIntensity, this.state.targetCircleIntensity);
-						
-			// ULTRA FAST LERP for punchy percussion effect
-			// Attack (contraction when bass hits) = 0.85 (very fast)
-			// Release (expansion back) = 1.0 (instant recovery)
-			let effectiveMotionLerp;
-			if (apolMode && isReactive) {
-				effectiveMotionLerp = currentIntensity > this.state.currentCircleIntensity ? 0.85 : 1.0;
+			const isStatic = !!circle.staticCorner;
+			const isReactiveBass = circle.reactToBass && !isStatic;
+			const isReactiveTreble = circle.reactToTreble && !isStatic;
+
+			const rx = circle.harmonicRatioX ?? (1.0 + (index % 3) * 0.35);
+			const ry = circle.harmonicRatioY ?? (1.25 + (index % 2) * 0.4);
+
+			// Multi-frequency Lissajous fluid circulation (organic, non-repeating paths)
+			const lissajousX = Math.sin(phase * rx + circle.offsetX);
+			const lissajousY = Math.cos(phase * ry + circle.offsetY);
+
+			let driftX = 0;
+			let driftY = 0;
+			let liquidX = 0;
+			let liquidY = 0;
+			let waveRotate = 0;
+			let intensityScale = 1;
+			let targetOpacity = 0.92;
+
+			if (apolMode) {
+				if (isStatic) {
+					// Static corner anchor: slow breathing, subtle ambient drift
+					driftX = Math.sin(phase * 0.3 + circle.offsetX) * 8;
+					driftY = Math.cos(phase * 0.25 + circle.offsetY) * 6;
+					intensityScale = 1 + Math.sin(phase * 0.5) * 0.02;
+					targetOpacity = 0.78;
+				} else {
+					const baseDrift = 18 + index * 4;
+					const driftAmplitude = baseDrift + broadbandEnergy * 14;
+
+					driftX = lissajousX * (driftAmplitude * 0.65);
+					driftY = lissajousY * (driftAmplitude * 0.5);
+					liquidX = Math.sin(phase * 1.3 + circle.offsetY) * (driftAmplitude * 0.14);
+					liquidY = Math.cos(phase * 1.1 + circle.offsetX) * (driftAmplitude * 0.1);
+					waveRotate = Math.sin(phase * 0.4 + circle.offsetX) * 4;
+
+					// Apple-style viscoelastic contraction on bass hits (damped harmonic spring response):
+					// Musical physical punch on transients with graceful organic recovery
+					if (isReactiveBass) {
+						const contractionFactor = Math.min(0.20, bassEnergy * 0.18);
+						intensityScale = 1 - contractionFactor;
+						targetOpacity = Math.max(0.76, 0.94 - contractionFactor * 0.3);
+					} else {
+						intensityScale = 1 + Math.sin(phase * 0.8 + circle.offsetX) * 0.03;
+						targetOpacity = 0.9;
+					}
+
+					// Treble transient shimmer (cymbals, hi-hats, vocal sparkle)
+					if (isReactiveTreble) {
+						const shimmer = Math.sin(phase * 2.8 + circle.offsetX) * (trebleEnergy * 0.02);
+						intensityScale += shimmer;
+					}
+				}
 			} else {
-				effectiveMotionLerp = motionLerp;
+				// Normal mode
+				if (isStatic) {
+					driftX = Math.sin(phase * 0.3 + circle.offsetX) * 10;
+					driftY = Math.cos(phase * 0.3 + circle.offsetY) * 8;
+					intensityScale = 1;
+					targetOpacity = 0.85;
+				} else {
+					const baseDrift = 20 + index * 5;
+					const reactiveDrift = isReactiveBass ? bassEnergy * 16 : broadbandEnergy * 8;
+					const driftAmplitude = baseDrift + reactiveDrift;
+
+					driftX = lissajousX * driftAmplitude;
+					driftY = lissajousY * (driftAmplitude * 0.82);
+					liquidX = Math.sin(phase * 1.1 + circle.offsetY) * (driftAmplitude * 0.12);
+					liquidY = Math.cos(phase * 1.2 + circle.offsetX) * (driftAmplitude * 0.10);
+					waveRotate = Math.sin(phase * 0.4 + circle.offsetX) * 4;
+
+					intensityScale = 1 + (isReactiveBass ? bassEnergy * 0.16 : broadbandEnergy * 0.08);
+					if (isReactiveTreble) {
+						intensityScale += Math.sin(phase * 2.8 + circle.offsetX) * (trebleEnergy * 0.02);
+					}
+					targetOpacity = isReactiveBass ? 0.94 : 0.88;
+				}
 			}
-				
-			let driftAmplitude, driftX, driftY, liquidX, liquidY, waveRotate, intensityScale, targetOpacity;
-				
-			if (apolMode && isReactive) {
-				// Apol mode: circles positioned from top-right and contract on bass with fast response
-				// Calculate base amplitude for movement
-				driftAmplitude = baseDrift;
-							
-				// Movement around top-right corner position with height constraint - reduced movement speed
-				driftX = isStatic ? 0 : Math.sin(time + circle.offsetX) * (driftAmplitude * 0.6); // Slower horizontal
-				driftY = isStatic ? 0 : Math.max(0, Math.min(containerHeight - circle.size, Math.cos(time + circle.offsetY) * (driftAmplitude * 0.5))); // Slower vertical
-							
-				liquidX = isStatic ? 0 : Math.sin(time * 0.58 + circle.offsetY) * (driftAmplitude * 0.12); // Reduced liquid movement
-				liquidY = isStatic ? 0 : Math.cos(time * 0.66 + circle.offsetX) * (driftAmplitude * 0.09); // Reduced liquid movement
-				waveRotate = isStatic ? 0 : Math.sin(time * 0.45 + circle.offsetX) * 4; // Less rotation
-							
-				// ULTRA DRAMATIC contraction for extreme punch effect
-				const contractionFactor = currentIntensity * 0.6; // Shrink up to 60% (MAXIMUM dramatic effect)
-				intensityScale = 1 - contractionFactor + Math.sin(time * 0.9 + circle.offsetX) * 0.03;
-				targetOpacity = 1 - contractionFactor * 0.8; // Opacity drops even more
-			} else if (apolMode && isStatic) {
-				// Static circles in Apol mode stay constrained to top-right area with minimal movement
-				driftAmplitude = baseDrift;
-							
-				const maxHeight = containerHeight * 0.7; // Allow more room since user set top: 70%
-				driftX = 0;
-				// Very limited movement - almost static
-				driftY = Math.max(0, Math.min(maxHeight - circle.size, Math.cos(time + circle.offsetY) * (driftAmplitude * 0.15)));
-				liquidX = 0;
-				liquidY = Math.max(0, Math.min(maxHeight - circle.size, Math.cos(time * 0.66 + circle.offsetX) * (driftAmplitude * 0.08)));
-				waveRotate = 0;
-				intensityScale = 1;
-				targetOpacity = 1;
-			} else {
-				// Normal mode: existing behavior
-				const reactiveDrift = isReactive ? currentIntensity * 42 * effectiveMotionLerp : currentIntensity * 8 * effectiveMotionLerp;
-				driftAmplitude = baseDrift + reactiveDrift;
-					
-				driftX = isStatic ? 0 : Math.sin(time + circle.offsetX) * driftAmplitude;
-				driftY = isStatic ? 0 : Math.cos(time + circle.offsetY) * (driftAmplitude * 0.8);
-				liquidX = isStatic ? 0 : Math.sin(time * 0.58 + circle.offsetY) * (driftAmplitude * 0.24);
-				liquidY = isStatic ? 0 : Math.cos(time * 0.66 + circle.offsetX) * (driftAmplitude * 0.18);
-				waveRotate = isStatic ? 0 : Math.sin(time * 0.45 + circle.offsetX) * 6;
-				intensityScale = isStatic
-					? 1
-					: 1 + (isReactive ? currentIntensity * 0.45 : currentIntensity * 0.12) + Math.sin(time * 0.9 + circle.offsetX) * 0.03;
-				targetOpacity = isStatic ? 1 : isReactive ? 1 : 0.9;
-			}
-	
-			circle.element.style.transform = `translate(${driftX || 0 + liquidX}px, ${driftY || 0 + liquidY}px) rotate(${waveRotate}deg) scale(${intensityScale})`;
+
+			circle.element.style.transform = `translate3d(${(driftX || 0) + (liquidX || 0)}px, ${(driftY || 0) + (liquidY || 0)}px, 0) rotate(${waveRotate}deg) scale(${intensityScale})`;
 			circle.element.style.opacity = `${targetOpacity}`;
 		});
 	}
@@ -1326,6 +1596,12 @@ export class AudioVisualiser implements AudioVisualiserAPI {
 
 	public togglePause(pause: boolean): void {
 		this.options.isNowPlayingVisible = pause;
+		if (!pause) {
+			this.adaptiveBassTracker?.reset();
+			this.songAdaptationController?.reset();
+			this.bassSpikeDetector?.reset();
+			this.dynamicsEngine?.reset();
+		}
 	}
 
 	// Handle all the animation and visual updates
@@ -1334,9 +1610,21 @@ export class AudioVisualiser implements AudioVisualiserAPI {
 	}
 
 	private getLerpFactor(current: number, target: number): number {
-		const { lerpFactor } = this.options;
-		return target > current ? lerpFactor : lerpFactor * 0.15;
+		const baseLerp = this.options.lerpFactor ?? 0.35;
+		const currentBpm = this.pendingAudioData?.bpm || this.songAdaptationController?.getAverageBPM() || 120;
+		const tempoScale = Math.max(0.85, Math.min(1.35, currentBpm / 120));
+
+		if (target > current) {
+			// Musical attack: punchy and immediate without jarring instant snaps
+			return Math.min(0.45, Math.max(0.24, baseLerp * 0.8 * tempoScale));
+		}
+		// Graceful decay: recovers in time for fast beats (160+ BPM) without sudden drop-offs
+		const isSustained = this.adaptiveBassTracker?.isSustainedBass ?? false;
+		const decayBase = isSustained ? 0.22 : 0.16;
+		return Math.min(0.32, Math.max(0.10, baseLerp * decayBase * tempoScale));
 	}
+
+	private lastFrequency: number = 60;
 
 	private update(analysis: AudioAnalysis): void {
 		if (!this.options.isNowPlayingVisible) {
@@ -1350,6 +1638,8 @@ export class AudioVisualiser implements AudioVisualiserAPI {
 			return;
 		}
 
+		this.lastFrequency = strongestBass.frequency;
+
 		let baseIntensity = this.calculateBaseIntensity(strongestBass, bassAverage);
 
 		if (this.options.useDynamicIntensity) {
@@ -1357,31 +1647,55 @@ export class AudioVisualiser implements AudioVisualiserAPI {
 			baseIntensity = Math.max(baseIntensity, dynamicFactor * 0.5);
 		}
 
+		// Process through adaptive baseline tracker to extract transients from continuous heavy bass
+		const trackedIntensity = this.adaptiveBassTracker.process(baseIntensity);
+
 		// Let the song shape how intense things get
 		const adaptiveIntensityMultiplier = this.songAdaptationController.getAdaptiveIntensityMultiplier();
-		const totalIntensity = baseIntensity * (this.options.intensityMultiplier ?? 1) * adaptiveIntensityMultiplier;
+		const rawIntensity = trackedIntensity * ((this.options.intensityMultiplier ?? 2) * 0.5) * adaptiveIntensityMultiplier;
+
+		// Soft-compression limiter curve:
+		// Below 0.8: linear 1:1 response (preserves clean dynamics and punch)
+		// Above 0.8: smooth hyperbolic tangent soft-knee (prevents ultra-heavy electronic bass from blowing out)
+		const totalIntensity = rawIntensity <= 0.8
+			? rawIntensity
+			: 0.8 + Math.tanh((rawIntensity - 0.8) * 0.6) * 0.35;
+
+		// Feed dynamics engine spring targets
+		this.dynamicsEngine.updateAudio(
+			analysis,
+			trackedIntensity,
+			(this.options.intensityMultiplier ?? 2) * adaptiveIntensityMultiplier
+		);
 
 		// Feed it more data so it learns what kind of track this is
 		this.songAdaptationController.addAnalysis(analysis, totalIntensity, this.bassSpikeDetector.getSpikeLevel());
 
 		this.updateTargetValues(totalIntensity);
-		this.applyLerping();
-		this.applyEffects(strongestBass.frequency);
 	}
 
 	private calculateBaseIntensity(strongestBass: any, bassAverage: number): number {
-		// The sweet spot for bass is 20-150Hz, anything else just muddies it up
-		const isRealBass = strongestBass.frequency >= 20 && strongestBass.frequency <= 150;
-		const lowFreqIntensity = isRealBass 
-			? Math.max(0, 1 - (strongestBass.frequency - 20) / 130)
-			: Math.max(0, 1 - (strongestBass.frequency - 20) / 250) * 0.5;
-		
-		// When the bass hits, make it count
-		const magnitudeIntensity = isRealBass
-			? Math.min(bassAverage * 12000, 1) * (1 + strongestBass.magnitude * 2.5)
-			: Math.min(bassAverage * 8000, 1);
-		
-		return lowFreqIntensity * magnitudeIntensity;
+		// Broaden real bass range: Electric bass fundamentals span 40Hz (E1) to ~200Hz+ (G3/harmonics).
+		// Rock rhythm guitars also have heavy energy between 100-220Hz.
+		const freq = strongestBass.frequency;
+		let freqWeight: number;
+
+		if (freq >= 20 && freq <= 170) {
+			freqWeight = Math.max(0.4, 1 - (freq - 20) / 220);
+		} else if (freq > 170 && freq <= 260) {
+			freqWeight = 0.4 * Math.max(0.1, 1 - (freq - 170) / 100);
+		} else {
+			freqWeight = 0.1;
+		}
+
+		// Peak magnitude boost:
+		// Backend strongestBass.magnitude is normalized by 1/2048 (~0.001 to ~0.012).
+		// Scaling by 120 gives real kicks and bass attacks a punchy boost!
+		const peakBoost = Math.min(1.2, (strongestBass.magnitude ?? 0) * 120);
+		const magnitudeMultiplier = 1 + peakBoost * 1.5;
+		const magnitudeIntensity = Math.min(bassAverage * 10000, 1) * magnitudeMultiplier;
+
+		return Math.min(1.2, freqWeight * magnitudeIntensity);
 	}
 
 	private updateTargetValues(totalIntensity: number): void {
@@ -1391,13 +1705,14 @@ export class AudioVisualiser implements AudioVisualiserAPI {
 		this.state.targetCircleIntensity = totalIntensity;
 	}
 
-	private applyLerping(): void {
-		const { lerpFactor } = this.options;
-		const attackFactor = lerpFactor;
-		const decayFactor = lerpFactor * 0.15;
-
-		const getFactor = (current: number, target: number) =>
-			this.getLerpFactor(current, target);
+	private applyLerping(dt: number = 1 / 60): void {
+		const getFactor = (current: number, target: number) => {
+			const baseFactor = this.getLerpFactor(current, target);
+			// Smooth delta-time exponential interpolation: at 60fps (dt = 1/60), effective factor == baseFactor
+			// Keeps exact same bass reaction speed while making rendering completely smooth across all refresh rates
+			const clampedDt = Math.max(0.001, Math.min(dt, 0.05));
+			return 1 - Math.pow(1 - Math.min(baseFactor, 0.99), clampedDt * 60);
+		};
 
 		this.state.currentVignetteSize = this.lerp(
 			this.state.currentVignetteSize,
@@ -1421,76 +1736,82 @@ export class AudioVisualiser implements AudioVisualiserAPI {
 		);
 	}
 
-	private async applyEffects(frequency: number): Promise<void> {
-		const { currentVignetteSize, currentVignetteBlur, currentIntensity } = this.state;
-
-		const leftIntensity = currentIntensity * 0.7;
-		const bottomIntensity = currentIntensity * 0.6;
+	public async updateCoverArt(specifiedUrl?: string): Promise<void> {
 		const artworkColourEnabled = DataStoreService.vignetteUsesArtworkColourEnabled == true;
 		const enhancedBackgroundEnabled = DataStoreService.enhancedBackgroundEnabled == true;
 
-		if (artworkColourEnabled || enhancedBackgroundEnabled || this.options.backgroundMode === 'images') {
-			const coverUrl = retrieveCoverArt();
-			this.updateAtmosphereLayerBackground(coverUrl);
-			if (coverUrl && !this.isLoadingCoverArt && coverUrl !== this.lastCoverUrl) {
-				this.isLoadingCoverArt = true;
-				try {
-					const { colour, palette } = await this.fetchCoverArtData(coverUrl);
-					this.lastCoverUrl = coverUrl;
-					this.cachedVignetteColour = colour && colour !== '255, 255, 255' ? colour : '255, 255, 255';
-					this.updateAtmosphereLayerBackground(coverUrl);
-
-					if (enhancedBackgroundEnabled && palette.length > 0) {
-						this.createAtmosphereCircles(palette);
-					}
-
-					this.cachedAtmospherePalette = palette;
-				} catch (error) {
-					console.error('[reactivo] Error loading cover art:', error);
-					this.cachedVignetteColour = '255, 255, 255';
-					this.cachedAtmospherePalette = [];
-				} finally {
-					this.isLoadingCoverArt = false;
-				}
-			} else if (coverUrl && enhancedBackgroundEnabled && this.atmosphereCircles.length === 0) {
-				const { colour, palette } = await this.fetchCoverArtData(coverUrl);
-				this.cachedVignetteColour = colour && colour !== '255, 255, 255' ? colour : '255, 255, 255';
-				if (palette.length > 0) {
-					this.createAtmosphereCircles(palette);
-				}
-				this.cachedAtmospherePalette = palette;
-			}
-		} else {
+		if (!artworkColourEnabled && !enhancedBackgroundEnabled && this.options.backgroundMode !== 'images') {
 			this.cachedVignetteColour = "255, 255, 255";
 			this.cachedAtmospherePalette = [];
 			this.lastCoverUrl = null;
+			return;
 		}
 
-		const vignetteColour = this.cachedVignetteColour;
+		const coverUrl = specifiedUrl || retrieveCoverArt();
+		if (!coverUrl || this.isLoadingCoverArt || coverUrl === this.lastCoverUrl) {
+			return;
+		}
+
+		this.isLoadingCoverArt = true;
+		this.lastCoverUrl = coverUrl;
+
+		try {
+			const { colour, palette } = await this.fetchCoverArtData(coverUrl);
+			this.cachedVignetteColour = colour && colour !== '255, 255, 255' ? colour : '255, 255, 255';
+			this.updateAtmosphereLayerBackground(coverUrl);
+
+			if (enhancedBackgroundEnabled && palette.length > 0) {
+				this.createAtmosphereCircles(palette);
+			}
+
+			this.cachedAtmospherePalette = palette;
+		} catch (error) {
+			console.error('[reactivo] Error loading cover art:', error);
+			this.cachedVignetteColour = '255, 255, 255';
+			this.cachedAtmospherePalette = [];
+		} finally {
+			this.isLoadingCoverArt = false;
+		}
+	}
+
+	private applyEffects(frequency: number, dynamics?: { bass: number; energy: number; treble: number; fluidPhase: number }): void {
+		const saturation = this.options.colorSaturation ?? 1;
+		const vignetteColour = this.applySaturationToRgb(this.cachedVignetteColour, saturation);
 		this.apolMusicWannabeEnabled = DataStoreService.apolMusicWannabeEnabled ?? false;
 
-		let vignetteBoxShadow = `
-        inset 0 0 ${currentVignetteSize}px ${currentVignetteBlur}px rgba(${vignetteColour}, ${0.4 + currentIntensity * 0.6}),
-        inset 0 0 ${currentVignetteSize * 0.7}px ${currentVignetteBlur * 0.7}px rgba(${vignetteColour}, ${currentIntensity * 0.8}),
-        inset 0 0 ${currentVignetteSize * 0.5}px ${currentVignetteBlur * 0.5}px rgba(${vignetteColour}, ${currentIntensity * 0.6}),
-        inset ${currentVignetteSize * 0.4}px 0 ${currentVignetteBlur * 1.2}px ${currentVignetteBlur * 0.3}px rgba(${vignetteColour}, ${leftIntensity}),
-        inset 0 ${currentVignetteSize * 0.3}px ${currentVignetteBlur * 1.2}px ${currentVignetteBlur * 0.3}px rgba(${vignetteColour}, ${bottomIntensity})
-    `;
+		const effIntensity = dynamics ? Math.min(dynamics.bass, 1.15) : Math.min(this.state.currentIntensity, 1.15);
 
-		this.elements.vignette.style.boxShadow = vignetteBoxShadow;
+		// Render multi-layer blur box-shadow ONLY when color changes (not continuous per-frame re-rasterization!)
+		if (vignetteColour !== this.lastAppliedVignetteColour) {
+			this.lastAppliedVignetteColour = vignetteColour;
+			this.elements.vignette.style.boxShadow = `
+				inset 0 0 260px 130px rgba(${vignetteColour}, 0.75),
+				inset 0 0 180px 90px rgba(${vignetteColour}, 0.55),
+				inset 0 0 130px 65px rgba(${vignetteColour}, 0.40),
+				inset 100px 0 140px 35px rgba(${vignetteColour}, 0.35),
+				inset 0 80px 140px 35px rgba(${vignetteColour}, 0.30)
+			`;
+		}
 
-		const glowBackground = `
-    radial-gradient(ellipse 140% 120% at 35% 70%,
-        rgba(${vignetteColour}, ${currentIntensity * 0.35}) 0%,
-        rgba(${vignetteColour}, ${currentIntensity * 0.18}) 30%,
-        transparent 70%
-    )
-`;
-		this.elements.glowLayer.style.background = glowBackground;
+		// Modulate instant beat reactivity via GPU opacity compositing (zero paint/raster cost)
+		const targetVignetteOpacity = Math.min(0.90, 0.32 + effIntensity * 0.40);
+		this.elements.vignette.style.opacity = targetVignetteOpacity.toFixed(3);
 
-		const ringSize = 200 + currentIntensity * 600;
-		this.elements.pulseRing.style.width = `${ringSize}px`;
-		this.elements.pulseRing.style.height = `${ringSize}px`;
+		if (vignetteColour !== this.lastAppliedGlowColour) {
+			this.lastAppliedGlowColour = vignetteColour;
+			this.elements.glowLayer.style.background = `
+				radial-gradient(ellipse 140% 120% at 35% 70%,
+					rgba(${vignetteColour}, 0.32) 0%,
+					rgba(${vignetteColour}, 0.16) 30%,
+					transparent 70%
+				)
+			`;
+		}
+		const targetGlowOpacity = Math.min(0.72, 0.10 + effIntensity * 0.50);
+		this.elements.glowLayer.style.opacity = targetGlowOpacity.toFixed(3);
+
+		const ringScale = (240 + effIntensity * 220) / 300;
+		this.elements.pulseRing.style.transform = `translate3d(-50%, -50%, 0) scale(${ringScale.toFixed(3)})`;
 
 		if (DataStoreService.enhancedBackgroundEnabled) {
 			if (this.cachedAtmospherePalette.length && this.atmosphereCircles.length === 0) {
@@ -1499,7 +1820,7 @@ export class AudioVisualiser implements AudioVisualiserAPI {
 			if (this.atmosphereLayer) {
 				this.atmosphereLayer.style.opacity = '1';
 			}
-			this.updateAtmosphereCircles();
+			this.updateAtmosphereCircles(dynamics);
 		} else if (this.atmosphereLayer) {
 			this.atmosphereLayer.style.opacity = '0';
 		}
@@ -1541,6 +1862,17 @@ export class AudioVisualiser implements AudioVisualiserAPI {
 		this.options.intensityMultiplier = Math.max(0, mult);
 	}
 
+	public setColorSaturation(saturation: number): void {
+		this.options.colorSaturation = Math.max(0, saturation);
+		if (this.atmosphereLayer) {
+			const targetBlur = this.options.backgroundMode === 'images' ? 45 : 100;
+			this.atmosphereLayer.style.filter = `blur(${targetBlur}px) contrast(1.12) brightness(0.52) saturate(${this.options.colorSaturation}) !important`;
+		}
+		if (this.options.useEnhancedBackground && this.cachedAtmospherePalette.length) {
+			this.refreshAtmosphereCircles();
+		}
+	}
+
 	public setDynamicLerpEnabled(enabled: boolean): void {
 		this.options.useDynamicLerp = !!enabled;
 	}
@@ -1570,86 +1902,96 @@ export class AudioVisualiser implements AudioVisualiserAPI {
 
 	public setApolMusicWannabeEnabled(enabled: boolean): void {
 		this.apolMusicWannabeEnabled = enabled;
+		if (this.cachedAtmospherePalette.length > 0) {
+			this.refreshAtmosphereCircles();
+		}
 	}
 
 	public refreshAtmosphereCircles(): void {
 		if (!this.atmosphereLayer) return;
 
-		const spinner = this.coverSpinner && this.coverSpinner.parentElement === this.atmosphereLayer
-			? this.coverSpinner
-			: null;
+		this.lastCoverCheckTime = 0;
+		this.currentAppliedCoverUrl = '__init__';
 
-		const fadeDuration = 400;
-		const oldElements: HTMLElement[] = [];
-
-		this.atmosphereCircles.forEach(circle => oldElements.push(circle.element));
-		this.circlePool.forEach(circle => oldElements.push(circle));
-
-		this.atmosphereCircles = [];
-		this.circlePool = [];
-
-		if (oldElements.length > 0) {
-			oldElements.forEach(el => {
-				if (el === spinner) return;
-				el.style.transition = 'opacity 0.4s ease-out, transform 0.6s ease-out !important';
-				el.style.opacity = '0';
-			});
-
-			window.setTimeout(() => {
-				oldElements.forEach(el => {
-					if (el.parentElement === this.atmosphereLayer && this.atmosphereLayer) {
-						this.atmosphereLayer.removeChild(el);
-					}
-				});
-
-				if (spinner && this.atmosphereLayer) {
-					this.atmosphereLayer.innerHTML = '';
-					this.atmosphereLayer.appendChild(spinner);
-				} else if (this.atmosphereLayer) {
-					this.atmosphereLayer.innerHTML = '';
-				}
-
-				if (this.cachedAtmospherePalette.length > 0) {
-					this.createAtmosphereCircles(this.cachedAtmospherePalette);
-				}
-
-				if (this.atmosphereLayer) {
-					this.atmosphereLayer.style.opacity = this.options.useEnhancedBackground ? '1' : '0';
-				}
-			}, fadeDuration);
-			return;
+		if (this.cachedAtmospherePalette.length > 0) {
+			this.createAtmosphereCircles(this.cachedAtmospherePalette);
 		}
 
-		if (this.cachedAtmospherePalette.length === 0) {
-			if (this.atmosphereLayer) {
-				this.atmosphereLayer.style.opacity = '0';
-			}
-			return;
-		}
-
-		this.atmosphereLayer.innerHTML = '';
-		if (spinner) {
-			this.atmosphereLayer.appendChild(spinner);
-		}
-		this.createAtmosphereCircles(this.cachedAtmospherePalette);
 		if (this.atmosphereLayer) {
-			this.atmosphereLayer.style.opacity = this.options.useEnhancedBackground ? '1' : '0';
+			this.atmosphereLayer.style.opacity = this.options.useEnhancedBackground && this.atmosphereCircles.length > 0 ? '1' : '0';
 		}
 	}
 
+	private memorySweepIntervalId: number | null = null;
+
+	private startMemorySweep(): void {
+		// Run a gentle memory sweep every 2 minutes
+		this.memorySweepIntervalId = window.setInterval(() => {
+			if ('requestIdleCallback' in window) {
+				(window as any).requestIdleCallback(() => {
+					// 1. Evict expired image cache entries
+					const now = Date.now();
+					for (const [key, val] of this.imageCache.entries()) {
+						if (now - val.timestamp > this.CACHE_TTL) {
+							this.imageCache.delete(key);
+						}
+					}
+					// 2. Trigger V8 GC if exposed
+					(window as any).gc?.();
+				});
+			}
+		}, 120000);
+	}
+
+	private stopMemorySweep(): void {
+		if (this.memorySweepIntervalId) {
+			clearInterval(this.memorySweepIntervalId);
+			this.memorySweepIntervalId = null;
+		}
+	}
+
+	private onVisibilityChange = () => {
+		if (document.hidden) {
+			this.stopAnimationLoop();
+			// Idle cleanup when window is minimized/hidden
+			if ('requestIdleCallback' in window) {
+				(window as any).requestIdleCallback(() => {
+					(window as any).gc?.();
+				});
+			}
+		} else {
+			if (!this.animationFrameId && this.options.isNowPlayingVisible) {
+				this.startAnimationLoop();
+			}
+		}
+	};
+
 	private startAnimationLoop(): void {
+		let lastTimestamp = performance.now();
+
 		const animate = (timestamp: number) => {
+			const dt = Math.max(0.001, Math.min((timestamp - lastTimestamp) * 0.001, 0.1));
+			lastTimestamp = timestamp;
+
 			if (this.pendingAudioData) {
 				const analysis = this.pendingAudioData;
 				this.update(analysis);
 				
 				if (analysis.bpm && this.options.useDynamicLerp) {
 					const targetLerp = this.lerpController.calculateBPMLerp(analysis.bpm);
-					const smoothLerp = this.lerpController.update(targetLerp);
+					const smoothLerp = this.lerpController.update(targetLerp, dt);
 					this.setLerpFactor(smoothLerp);
 				}
 				
 				this.pendingAudioData = null;
+			}
+
+			// Advance physical spring dynamics
+			const dynamics = this.dynamicsEngine.updatePhysics(dt);
+
+			if (this.options.isNowPlayingVisible) {
+				this.applyLerping(dt);
+				this.applyEffects(this.lastFrequency, dynamics);
 			}
 			
 			// Keep it going
@@ -1667,11 +2009,20 @@ export class AudioVisualiser implements AudioVisualiserAPI {
 	}
 
 	public destroy(): void {
+		document.removeEventListener('visibilitychange', this.onVisibilityChange);
+		this.stopMemorySweep();
 		this.disconnect();
 		this.stopAnimationLoop();
+		this.adaptiveBassTracker?.reset();
+		this.dynamicsEngine?.reset();
 		if (this.overlayWrapper?.parentNode) {
 			this.overlayWrapper.parentNode.removeChild(this.overlayWrapper);
 		}
+		this.atmosphereCircles = [];
+		this.imageCache.clear();
+		this.lastCoverUrl = null;
+		this.coverSpinner = null;
+		this.atmosphereLayer = null;
 	}
 }
 

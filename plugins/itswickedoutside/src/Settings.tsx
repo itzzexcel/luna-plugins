@@ -14,6 +14,7 @@ import {
 	setEnhancedBackground,
 	setBackgroundMode,
 	setApolMusicWannabeEnabled,
+	setColorSaturation,
 } from ".";
 import { ReactiveStore } from "@luna/core";
 
@@ -34,6 +35,7 @@ export const DataStoreService = await ReactiveStore.getPluginStorage(
 	"reactivo",
 	{
 		vignetteIntensity: 2,
+		colorSaturation: 1,
 		dynamicLerpEnabled: true,
 		dynamicIntensityEnabled: false,
 		vignetteUsesArtworkColourEnabled: true,
@@ -47,6 +49,9 @@ export const DataStoreService = await ReactiveStore.getPluginStorage(
 export const Settings = () => {
 	const [intensity, setIntensity] = React.useState<number>(
 		DataStoreService.vignetteIntensity,
+	);
+	const [colorSaturation, setColorSaturationState] = React.useState<number>(
+		DataStoreService.colorSaturation ?? 1,
 	);
 	const [dynamic, setDynamic] = React.useState<boolean>(
 		DataStoreService.dynamicLerpEnabled,
@@ -75,6 +80,13 @@ export const Settings = () => {
 		DataStoreService.vignetteIntensity = val;
 		setIntensity(DataStoreService.vignetteIntensity);
 		setVignetteIntensity(DataStoreService.vignetteIntensity);
+	}, []);
+
+	const onColorSaturationChange = React.useCallback((val?: any) => {
+		if (isNaN(val)) val = 1;
+		DataStoreService.colorSaturation = val;
+		setColorSaturationState(DataStoreService.colorSaturation);
+		setColorSaturation(DataStoreService.colorSaturation);
 	}, []);
 
 	const onDynamicChange = React.useCallback(
@@ -159,6 +171,15 @@ export const Settings = () => {
 				step={1}
 				desc="Multiplier for vignette intensity (default: 2)"
 				onNumber={onIntensityChange}
+			/>
+			<LunaNumberSetting
+				title="Colour Saturation"
+				value={colorSaturation}
+				min={0}
+				max={3}
+				step={0.1}
+				desc="Multiplier for colour saturation of visual effects and atmosphere (default: 1)"
+				onNumber={onColorSaturationChange}
 			/>
 			<AnySwitch
 				title="Dynamic Intensity (WIP)"
