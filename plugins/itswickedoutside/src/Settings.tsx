@@ -43,6 +43,7 @@ export const DataStoreService = await ReactiveStore.getPluginStorage(
 		backgroundMode: 'circles',
 		apolMusicWannabeEnabled: false,
 		isFirstRan: false,
+		updateNeeded_1: true
 	},
 );
 
