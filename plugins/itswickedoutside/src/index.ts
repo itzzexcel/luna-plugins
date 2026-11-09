@@ -57,10 +57,10 @@ const initVisualiser = (): void => {
 	// 	console.log("[reactivo] installation screen skipped");
 	// }
 
-	if (DataStoreService.updateNeeded_1 = true) {
+	if (DataStoreService.updateNeeded_1 === true) {
 		try {
 			window.open(
-				"https://github.com/itzzexcel/luna-plugins/tree/master/plugins/itswickedoutside#installation",
+				"https://github.com/itzzexcel/reactivo/releases/latest",
 			);
 		} catch (e) { }
 		DataStoreService.updateNeeded_1 = false;
