@@ -615,7 +615,6 @@ export class AudioVisualiser implements AudioVisualiserAPI {
 	private elements: {
 		vignette: HTMLElement;
 		glowLayer: HTMLElement;
-		pulseRing: HTMLElement;
 	};
 
 	private state = {
@@ -792,20 +791,6 @@ export class AudioVisualiser implements AudioVisualiserAPI {
             will-change: opacity !important;
         `;
 
-		const pulseRing = document.createElement('div');
-		pulseRing.style.cssText = `
-            position: absolute !important;
-            top: 50% !important;
-            left: 50% !important;
-            transform: translate(-50%, -50%) !important;
-            width: 300px !important;
-            height: 300px !important;
-            border-radius: 50% !important;
-            opacity: 0 !important;
-            pointer-events: none !important;
-            will-change: transform, opacity !important;
-        `;
-
 		const status = document.createElement('div');
 		status.textContent = 'Disconnected';
 		status.style.cssText = `
@@ -883,7 +868,6 @@ export class AudioVisualiser implements AudioVisualiserAPI {
 
 		visualiser.appendChild(glowLayer);
 		visualiser.appendChild(vignette);
-		visualiser.appendChild(pulseRing);
 
 		this.overlayWrapper.appendChild(visualiser);
 		this.overlayWrapper.appendChild(status);
@@ -892,7 +876,6 @@ export class AudioVisualiser implements AudioVisualiserAPI {
 		return {
 			vignette,
 			glowLayer,
-			pulseRing,
 			status,
 			stats,
 			bassValue: bassStat.value,
@@ -1809,9 +1792,6 @@ export class AudioVisualiser implements AudioVisualiserAPI {
 		}
 		const targetGlowOpacity = Math.min(0.72, 0.10 + effIntensity * 0.50);
 		this.elements.glowLayer.style.opacity = targetGlowOpacity.toFixed(3);
-
-		const ringScale = (240 + effIntensity * 220) / 300;
-		this.elements.pulseRing.style.transform = `translate3d(-50%, -50%, 0) scale(${ringScale.toFixed(3)})`;
 
 		if (DataStoreService.enhancedBackgroundEnabled) {
 			if (this.cachedAtmospherePalette.length && this.atmosphereCircles.length === 0) {
