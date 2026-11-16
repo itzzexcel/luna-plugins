@@ -15,6 +15,8 @@ import {
 	setBackgroundMode,
 	setApolMusicWannabeEnabled,
 	setColorSaturation,
+	setCircleDensity,
+	setCircleOpacity,
 } from ".";
 import { ReactiveStore } from "@luna/core";
 
@@ -34,25 +36,45 @@ const AnySwitch =
 export const DataStoreService = await ReactiveStore.getPluginStorage(
 	"reactivo",
 	{
-		vignetteIntensity: 2,
-		colorSaturation: 1,
+		vignetteIntensity: 20,
+		colorSaturation: 10,
 		dynamicLerpEnabled: true,
 		dynamicIntensityEnabled: false,
 		vignetteUsesArtworkColourEnabled: true,
 		enhancedBackgroundEnabled: false,
 		backgroundMode: 'circles',
 		apolMusicWannabeEnabled: false,
+		circleDensity: 10,
+		circleOpacity: 10,
+		scale10xMigrated: false,
 		isFirstRan: false,
 		updateNeeded_1: true
 	},
 );
 
+// One-time migration from old decimal/small-int scale to 10x integer scale (1 = 0.1, 10 = 1.0)
+if (!DataStoreService.scale10xMigrated) {
+	if ((DataStoreService.vignetteIntensity ?? 20) <= 5) {
+		DataStoreService.vignetteIntensity = Math.round((DataStoreService.vignetteIntensity ?? 2) * 10);
+	}
+	if ((DataStoreService.colorSaturation ?? 10) <= 3) {
+		DataStoreService.colorSaturation = Math.round((DataStoreService.colorSaturation ?? 1) * 10);
+	}
+	if ((DataStoreService.circleDensity ?? 10) <= 1) {
+		DataStoreService.circleDensity = Math.round((DataStoreService.circleDensity ?? 1) * 10);
+	}
+	if ((DataStoreService.circleOpacity ?? 10) <= 1) {
+		DataStoreService.circleOpacity = Math.round((DataStoreService.circleOpacity ?? 1) * 10);
+	}
+	DataStoreService.scale10xMigrated = true;
+}
+
 export const Settings = () => {
 	const [intensity, setIntensity] = React.useState<number>(
-		DataStoreService.vignetteIntensity,
+		DataStoreService.vignetteIntensity ?? 20,
 	);
 	const [colorSaturation, setColorSaturationState] = React.useState<number>(
-		DataStoreService.colorSaturation ?? 1,
+		DataStoreService.colorSaturation ?? 10,
 	);
 	const [dynamic, setDynamic] = React.useState<boolean>(
 		DataStoreService.dynamicLerpEnabled,
@@ -75,19 +97,27 @@ export const Settings = () => {
 		React.useState<boolean>(
 			DataStoreService.apolMusicWannabeEnabled ?? false,
 		);
+	const [circleDensity, setCircleDensityState] = React.useState<number>(
+		DataStoreService.circleDensity ?? 10,
+	);
+	const [circleOpacity, setCircleOpacityState] = React.useState<number>(
+		DataStoreService.circleOpacity ?? 10,
+	);
 
 	const onIntensityChange = React.useCallback((val?: any) => {
-		if (isNaN(val)) val = 1;
-		DataStoreService.vignetteIntensity = val;
-		setIntensity(DataStoreService.vignetteIntensity);
-		setVignetteIntensity(DataStoreService.vignetteIntensity);
+		if (isNaN(val)) val = 20;
+		const clamped = Math.max(0, Math.min(50, Math.round(Number(val))));
+		DataStoreService.vignetteIntensity = clamped;
+		setIntensity(clamped);
+		setVignetteIntensity(clamped / 10);
 	}, []);
 
 	const onColorSaturationChange = React.useCallback((val?: any) => {
-		if (isNaN(val)) val = 1;
-		DataStoreService.colorSaturation = val;
-		setColorSaturationState(DataStoreService.colorSaturation);
-		setColorSaturation(DataStoreService.colorSaturation);
+		if (isNaN(val)) val = 10;
+		const clamped = Math.max(0, Math.min(30, Math.round(Number(val))));
+		DataStoreService.colorSaturation = clamped;
+		setColorSaturationState(clamped);
+		setColorSaturation(clamped / 10);
 	}, []);
 
 	const onDynamicChange = React.useCallback(
@@ -162,24 +192,40 @@ export const Settings = () => {
 		[],
 	);
 
+	const onCircleDensityChange = React.useCallback((val?: any) => {
+		if (isNaN(val)) val = 10;
+		const clamped = Math.max(0, Math.min(10, Math.round(Number(val))));
+		DataStoreService.circleDensity = clamped;
+		setCircleDensityState(clamped);
+		setCircleDensity(clamped / 10);
+	}, []);
+
+	const onCircleOpacityChange = React.useCallback((val?: any) => {
+		if (isNaN(val)) val = 10;
+		const clamped = Math.max(0, Math.min(10, Math.round(Number(val))));
+		DataStoreService.circleOpacity = clamped;
+		setCircleOpacityState(clamped);
+		setCircleOpacity(clamped / 10);
+	}, []);
+
 	return (
 		<LunaSettings>
 			<LunaNumberSetting
 				title="Vignette Intensity"
 				value={intensity}
 				min={0}
-				max={5}
+				max={50}
 				step={1}
-				desc="Multiplier for vignette intensity (default: 2)"
+				desc="Multiplier for vignette intensity (1 = 0.1, 10 = 1.0, default: 20)"
 				onNumber={onIntensityChange}
 			/>
 			<LunaNumberSetting
 				title="Colour Saturation"
 				value={colorSaturation}
 				min={0}
-				max={3}
-				step={0.1}
-				desc="Multiplier for colour saturation of visual effects and atmosphere (default: 1)"
+				max={30}
+				step={1}
+				desc="Multiplier for colour saturation of visual effects and atmosphere (1 = 0.1, 10 = 1.0, default: 10)"
 				onNumber={onColorSaturationChange}
 			/>
 			<AnySwitch
@@ -220,6 +266,24 @@ export const Settings = () => {
 				checked={apolMusicWannabeEnabled}
 				desc="Makes Enhanced Background circles shrink on bass instead of expanding."
 				onChange={onApolMusicWannabeChange}
+			/>
+			<LunaNumberSetting
+				title="Circle Density"
+				value={circleDensity}
+				min={0}
+				max={10}
+				step={1}
+				desc="Controls how many Enhanced Background circles are rendered (0 = none, 1 = 0.1, 10 = 1.0, default: 10)"
+				onNumber={onCircleDensityChange}
+			/>
+			<LunaNumberSetting
+				title="Circle Opacity"
+				value={circleOpacity}
+				min={0}
+				max={10}
+				step={1}
+				desc="Controls the opacity of Enhanced Background circles (0 = transparent, 1 = 0.1, 10 = 1.0, default: 10)"
+				onNumber={onCircleOpacityChange}
 			/>
 		</LunaSettings>
 	);

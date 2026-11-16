@@ -52,6 +52,8 @@ export interface AudioVisualiserOptions {
 	useEnhancedBackground?: boolean;
 	backgroundMode?: 'circles' | 'images';
 	useApolMusicWannabe?: boolean;
+	circleDensity?: number;
+	circleOpacity?: number;
 }
 
 export interface AudioVisualiserAPI {
@@ -69,6 +71,8 @@ export interface AudioVisualiserAPI {
 	setEnhancedBackground?: (enabled: boolean) => void;
 	setBackgroundMode?: (mode: 'circles' | 'images') => void;
 	setApolMusicWannabeEnabled?: (enabled: boolean) => void;
+	setCircleDensity?: (density: number) => void;
+	setCircleOpacity?: (opacity: number) => void;
 	refreshAtmosphereCircles?: () => void;
 	updateCoverArt?: (coverUrl?: string) => Promise<void>;
 }
@@ -692,6 +696,8 @@ export class AudioVisualiser implements AudioVisualiserAPI {
 			useEnhancedBackground: false,
 			backgroundMode: 'circles',
 			useApolMusicWannabe: false,
+			circleDensity: 1,
+			circleOpacity: 1,
 			...options,
 		};
 
@@ -1207,7 +1213,18 @@ export class AudioVisualiser implements AudioVisualiserAPI {
 		}
 
 		// 2. Dynamic Fluid Blobs (Multi-color mesh gradient with irrational harmonic circulation)
-		const dynamicConfigs = apolMode
+		const density = Math.max(0, Math.min(1, this.options.circleDensity ?? 1));
+		if (density <= 0) {
+			while (this.atmosphereCircles.length > 0) {
+				const excess = this.atmosphereCircles.pop();
+				if (excess && excess.element.parentElement === this.atmosphereLayer) {
+					excess.element.remove();
+				}
+			}
+			return;
+		}
+
+		const rawDynamicConfigs = apolMode
 			? [
 				{
 					cx: width * 0.76,
@@ -1294,6 +1311,7 @@ export class AudioVisualiser implements AudioVisualiserAPI {
 				},
 			];
 
+		const dynamicConfigs = rawDynamicConfigs.slice(0, Math.round(rawDynamicConfigs.length * density));
 		const totalCircles = 1 + dynamicConfigs.length;
 
 		// Prune any excess elements if switching between modes
@@ -1305,6 +1323,7 @@ export class AudioVisualiser implements AudioVisualiserAPI {
 		}
 
 		// 1. Static Anchor Circle
+		const opacityMult = Math.max(0, Math.min(1, this.options.circleOpacity ?? 1));
 		const staticBg = this.createCoverFragmentBackground(coverUrl, staticColor, palette[1 % palette.length]);
 		if (this.atmosphereCircles.length === 0) {
 			const staticCircle = document.createElement('div');
@@ -1316,7 +1335,7 @@ export class AudioVisualiser implements AudioVisualiserAPI {
 				top: ${staticTop}px !important;
 				border-radius: 50% !important;
 				background: ${staticBg} !important;
-				opacity: 0.78 !important;
+				opacity: ${(0.78 * opacityMult).toFixed(3)};
 				pointer-events: none !important;
 				mix-blend-mode: ${coverUrl ? 'normal' : 'screen'} !important;
 				transition: opacity 0.8s ease-out, background 0.8s ease-out !important;
@@ -1369,7 +1388,7 @@ export class AudioVisualiser implements AudioVisualiserAPI {
 					top: ${top}px !important;
 					border-radius: 50% !important;
 					background: ${bg} !important;
-					opacity: 0.94 !important;
+					opacity: ${(0.94 * opacityMult).toFixed(3)};
 					pointer-events: none !important;
 					mix-blend-mode: ${coverUrl ? 'normal' : 'screen'} !important;
 					transition: opacity 0.8s ease-out, background 0.8s ease-out !important;
@@ -1508,8 +1527,9 @@ export class AudioVisualiser implements AudioVisualiserAPI {
 				}
 			}
 
+			const opacityMult = Math.max(0, Math.min(1, this.options.circleOpacity ?? 1));
 			circle.element.style.transform = `translate3d(${(driftX || 0) + (liquidX || 0)}px, ${(driftY || 0) + (liquidY || 0)}px, 0) rotate(${waveRotate}deg) scale(${intensityScale})`;
-			circle.element.style.opacity = `${targetOpacity}`;
+			circle.element.style.opacity = `${(targetOpacity * opacityMult).toFixed(3)}`;
 		});
 	}
 
@@ -1885,6 +1905,18 @@ export class AudioVisualiser implements AudioVisualiserAPI {
 		if (this.cachedAtmospherePalette.length > 0) {
 			this.refreshAtmosphereCircles();
 		}
+	}
+
+	public setCircleDensity(density: number): void {
+		this.options.circleDensity = Math.max(0, Math.min(1, density));
+		if (this.options.useEnhancedBackground && this.cachedAtmospherePalette.length > 0) {
+			this.refreshAtmosphereCircles();
+		}
+	}
+
+	public setCircleOpacity(opacity: number): void {
+		this.options.circleOpacity = Math.max(0, Math.min(1, opacity));
+		this.updateAtmosphereCircles();
 	}
 
 	public refreshAtmosphereCircles(): void {

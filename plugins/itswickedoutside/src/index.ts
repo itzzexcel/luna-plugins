@@ -14,13 +14,15 @@ let visualiser: AudioVisualiserAPI | null = null;
 export let availableDevices: any[] = [];
 export let currentDevice: string = "";
 
-export let vignetteIntensity: number = DataStoreService.vignetteIntensity;
-export let colorSaturation: number = DataStoreService.colorSaturation ?? 1;
+export let vignetteIntensity: number = (DataStoreService.vignetteIntensity ?? 20) / 10;
+export let colorSaturation: number = (DataStoreService.colorSaturation ?? 10) / 10;
 export let dynamicLerpEnabled: boolean = true;
 export let dynamicIntensityEnabled: boolean = false;
 export let dynamicCoverColour: boolean = false;
 export let enhancedBackgroundEnabled: boolean = DataStoreService.enhancedBackgroundEnabled;
 export let apolMusicWannabeEnabled: boolean = DataStoreService.apolMusicWannabeEnabled ?? false;
+export let circleDensity: number = (DataStoreService.circleDensity ?? 10) / 10;
+export let circleOpacity: number = (DataStoreService.circleOpacity ?? 10) / 10;
 export let backgroundMode: 'circles' | 'images' =
 	(DataStoreService.backgroundMode as 'circles' | 'images') || 'circles';
 
@@ -92,6 +94,8 @@ const initVisualiser = (): void => {
 			useEnhancedBackground: enhancedBackgroundEnabled,
 			backgroundMode,
 			useApolMusicWannabe: apolMusicWannabeEnabled,
+			circleDensity,
+			circleOpacity,
 			zIndex: 0,
 		});
 	} catch (error) {
@@ -241,6 +245,20 @@ export function setBackgroundMode(mode: 'circles' | 'images') {
 	backgroundMode = mode;
 	if (visualiser && typeof visualiser.setBackgroundMode === "function") {
 		visualiser.setBackgroundMode(mode);
+	}
+}
+
+export function setCircleDensity(value: number) {
+	circleDensity = value;
+	if (visualiser && typeof visualiser.setCircleDensity === "function") {
+		visualiser.setCircleDensity(value);
+	}
+}
+
+export function setCircleOpacity(value: number) {
+	circleOpacity = value;
+	if (visualiser && typeof visualiser.setCircleOpacity === "function") {
+		visualiser.setCircleOpacity(value);
 	}
 }
 
