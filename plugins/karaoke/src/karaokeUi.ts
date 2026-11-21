@@ -17,13 +17,25 @@ export interface KaraokeUiCallbacks {
 const STYLE_ID = "karaoke-geist-styles";
 
 const GEIST_CSS = `
+	.krk-mic-btn,
+	.krk-mic-btn:hover,
+	.krk-mic-btn:active,
+	.krk-mic-btn:focus,
+	.krk-mic-btn:focus-visible,
+	.krk-mic-btn[data-active="true"],
+	.krk-mic-btn[data-active="true"]:hover {
+		background: transparent !important;
+		background-color: transparent !important;
+		border-color: transparent !important;
+		box-shadow: none !important;
+	}
 	.krk-mic-btn {
 		position: relative;
 		width: 28px;
 		height: 28px;
 		border-radius: 6px;
-		border: 1px solid transparent;
-		background: transparent;
+		border: none;
+		background: transparent !important;
 		color: rgba(255, 255, 255, 0.62);
 		display: inline-flex;
 		align-items: center;
@@ -32,18 +44,14 @@ const GEIST_CSS = `
 		margin: 0 2px;
 		padding: 0;
 		flex-shrink: 0;
-		transition: background 120ms ease, border-color 120ms ease, color 120ms ease;
+		transition: color 120ms ease;
 	}
 	.krk-mic-btn:hover {
-		background: #1c1c1c;
 		color: #ededed;
 	}
 	.krk-mic-btn[data-active="true"] {
-		background: #1a1a1a;
-		border-color: #333333;
 		color: #ededed;
 	}
-	.krk-mic-btn:focus-visible,
 	.krk-pop button:focus-visible,
 	.krk-slider:focus-visible {
 		outline: 1px solid #ededed;
