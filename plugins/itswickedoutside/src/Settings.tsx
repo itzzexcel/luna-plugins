@@ -54,7 +54,8 @@ export const DataStoreService = await ReactiveStore.getPluginStorage(
 		devDebugMenuEnabled: false,
 		scale10xMigrated: false,
 		isFirstRan: false,
-		updateNeeded_1: true
+		updateNeeded_1: false,
+		updateNeeded_2: true
 	},
 );
 
