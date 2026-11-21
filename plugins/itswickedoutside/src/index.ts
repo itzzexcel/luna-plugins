@@ -4,6 +4,7 @@ import { GetNPView, getFeatureFlag } from "./ui-interface";
 
 import createAudioVisualiser, { AudioVisualiserAPI } from "./giragira";
 import { DataStoreService } from "./Settings";
+import { DevDebugMenu } from "./devDebugMenu";
 
 export { Settings } from "./Settings";
 export const { trace, errSignal } = Tracer("[reactivo]");
@@ -11,6 +12,7 @@ export const unloads = new Set<LunaUnload>();
 
 // Global state
 let visualiser: AudioVisualiserAPI | null = null;
+let devMenu: DevDebugMenu | null = null;
 export let availableDevices: any[] = [];
 export let currentDevice: string = "";
 
@@ -20,9 +22,12 @@ export let dynamicLerpEnabled: boolean = true;
 export let dynamicIntensityEnabled: boolean = false;
 export let dynamicCoverColour: boolean = false;
 export let enhancedBackgroundEnabled: boolean = DataStoreService.enhancedBackgroundEnabled;
+export let appleFluidBackgroundEnabled: boolean = DataStoreService.appleFluidBackgroundEnabled ?? false;
 export let apolMusicWannabeEnabled: boolean = DataStoreService.apolMusicWannabeEnabled ?? false;
 export let circleDensity: number = (DataStoreService.circleDensity ?? 10) / 10;
 export let circleOpacity: number = (DataStoreService.circleOpacity ?? 10) / 10;
+export let fluidSpeed: number = (DataStoreService.fluidSpeed ?? 10) / 10;
+export let devDebugMenuEnabled: boolean = DataStoreService.devDebugMenuEnabled ?? false;
 export let backgroundMode: 'circles' | 'images' =
 	(DataStoreService.backgroundMode as 'circles' | 'images') || 'circles';
 
@@ -79,7 +84,7 @@ const initVisualiser = (): void => {
 		// Get container element
 		const nowPlaying = GetNPView();
 
-		// Create new visualiser instance
+		// Create new visualiser instance using live persisted settings so re-entering Now Playing stays in sync
 		visualiser = createAudioVisualiser(nowPlaying, {
 			lerpFactor: 0.2,
 			wsUrl: "ws://localhost:5343",
@@ -87,15 +92,17 @@ const initVisualiser = (): void => {
 			maxReconnectAttempts: 100,
 			showStatus: false,
 			showStats: false,
-			intensityMultiplier: vignetteIntensity,
-			colorSaturation,
-			useDynamicLerp: dynamicLerpEnabled,
-			useDynamicIntensity: dynamicIntensityEnabled,
-			useEnhancedBackground: enhancedBackgroundEnabled,
-			backgroundMode,
-			useApolMusicWannabe: apolMusicWannabeEnabled,
-			circleDensity,
-			circleOpacity,
+			intensityMultiplier: (DataStoreService.vignetteIntensity ?? vignetteIntensity * 10) / 10,
+			colorSaturation: (DataStoreService.colorSaturation ?? colorSaturation * 10) / 10,
+			useDynamicLerp: DataStoreService.dynamicLerpEnabled ?? dynamicLerpEnabled,
+			useDynamicIntensity: DataStoreService.dynamicIntensityEnabled ?? dynamicIntensityEnabled,
+			useEnhancedBackground: DataStoreService.enhancedBackgroundEnabled ?? enhancedBackgroundEnabled,
+			useAppleFluidBackground: DataStoreService.appleFluidBackgroundEnabled ?? appleFluidBackgroundEnabled,
+			backgroundMode: (DataStoreService.backgroundMode as 'circles' | 'images') || backgroundMode,
+			useApolMusicWannabe: DataStoreService.apolMusicWannabeEnabled ?? apolMusicWannabeEnabled,
+			circleDensity: (DataStoreService.circleDensity ?? circleDensity * 10) / 10,
+			circleOpacity: (DataStoreService.circleOpacity ?? circleOpacity * 10) / 10,
+			fluidSpeed: (DataStoreService.fluidSpeed ?? fluidSpeed * 10) / 10,
 			zIndex: 0,
 		});
 	} catch (error) {
@@ -119,9 +126,13 @@ const initWhenReady = (): void => {
 	sendAnalytics("plugin_opened");
 
 	if (document.readyState === "loading") {
-		document.addEventListener("DOMContentLoaded", initVisualiser);
+		document.addEventListener("DOMContentLoaded", () => {
+			initVisualiser();
+			if (devDebugMenuEnabled) setDevDebugMenuEnabled(true);
+		});
 	} else {
 		initVisualiser();
+		if (devDebugMenuEnabled) setDevDebugMenuEnabled(true);
 	}
 };
 
@@ -173,7 +184,7 @@ MediaItem.onMediaTransition(unloads, (mediaItem: MediaItem) => {
 	} else {
 		if (visualiser) {
 			visualiser.refreshAtmosphereCircles?.();
-			visualiser.updateCoverArt?.();
+			visualiser.updateCoverArt?.(undefined, true);
 		}
 	}
 
@@ -229,6 +240,13 @@ export function setEnhancedBackground(enabled: boolean) {
 	}
 }
 
+export function setAppleFluidBackgroundEnabled(enabled: boolean) {
+	appleFluidBackgroundEnabled = enabled;
+	if (visualiser && typeof visualiser.setAppleFluidBackgroundEnabled === "function") {
+		visualiser.setAppleFluidBackgroundEnabled(enabled);
+	}
+}
+
 // Deprecated - kept for compatibility but no longer used
 export function setDynamicColourArt(enabled: boolean) {
 	dynamicCoverColour = enabled;
@@ -262,8 +280,83 @@ export function setCircleOpacity(value: number) {
 	}
 }
 
+export function setFluidSpeed(value: number) {
+	fluidSpeed = value;
+	if (visualiser && typeof visualiser.setFluidSpeed === "function") {
+		visualiser.setFluidSpeed(value);
+	}
+}
+
+export function setDevDebugMenuEnabled(enabled: boolean) {
+	devDebugMenuEnabled = enabled;
+	if (enabled) {
+		if (!devMenu) {
+			devMenu = new DevDebugMenu({
+				getVisualiser: () => visualiser,
+				onClose: () => {
+					DataStoreService.devDebugMenuEnabled = false;
+					setDevDebugMenuEnabled(false);
+				},
+				onSetEnhancedBackground: (v) => {
+					DataStoreService.enhancedBackgroundEnabled = v;
+					setEnhancedBackground(v);
+				},
+				onSetAppleFluidBackground: (v) => {
+					DataStoreService.appleFluidBackgroundEnabled = v;
+					setAppleFluidBackgroundEnabled(v);
+				},
+				onSetBackgroundMode: (m) => {
+					DataStoreService.backgroundMode = m;
+					setBackgroundMode(m);
+				},
+				onSetApolMode: (v) => {
+					DataStoreService.apolMusicWannabeEnabled = v;
+					setApolMusicWannabeEnabled(v);
+				},
+				onSetDynamicLerp: (v) => {
+					DataStoreService.dynamicLerpEnabled = v;
+					setDynamicLerpEnabled(v);
+				},
+				onSetDynamicIntensity: (v) => {
+					DataStoreService.dynamicIntensityEnabled = v;
+					setDynamicIntensityEnabled(v);
+				},
+				onSetIntensity: (v) => {
+					DataStoreService.vignetteIntensity = Math.round(v * 10);
+					setVignetteIntensity(v);
+				},
+				onSetSaturation: (v) => {
+					DataStoreService.colorSaturation = Math.round(v * 10);
+					setColorSaturation(v);
+				},
+				onSetDensity: (v) => {
+					DataStoreService.circleDensity = Math.round(v * 10);
+					setCircleDensity(v);
+				},
+				onSetOpacity: (v) => {
+					DataStoreService.circleOpacity = Math.round(v * 10);
+					setCircleOpacity(v);
+				},
+				onSetFluidSpeed: (v) => {
+					DataStoreService.fluidSpeed = Math.round(v * 10);
+					setFluidSpeed(v);
+				},
+			});
+		}
+	} else if (devMenu) {
+		devMenu.destroy();
+		devMenu = null;
+	}
+}
+
 // Cleanup
 unloads.add(() => {
+	if (devMenu) {
+		try {
+			devMenu.destroy();
+		} catch { }
+		devMenu = null;
+	}
 	if (visualiser) {
 		try {
 			visualiser.disconnect();

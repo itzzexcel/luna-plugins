@@ -12,11 +12,14 @@ import {
 	setDynamicIntensityEnabled,
 	setDynamicColourArt,
 	setEnhancedBackground,
+	setAppleFluidBackgroundEnabled,
 	setBackgroundMode,
 	setApolMusicWannabeEnabled,
 	setColorSaturation,
 	setCircleDensity,
 	setCircleOpacity,
+	setFluidSpeed,
+	setDevDebugMenuEnabled,
 } from ".";
 import { ReactiveStore } from "@luna/core";
 
@@ -42,10 +45,13 @@ export const DataStoreService = await ReactiveStore.getPluginStorage(
 		dynamicIntensityEnabled: false,
 		vignetteUsesArtworkColourEnabled: true,
 		enhancedBackgroundEnabled: false,
+		appleFluidBackgroundEnabled: false,
 		backgroundMode: 'circles',
 		apolMusicWannabeEnabled: false,
 		circleDensity: 10,
 		circleOpacity: 10,
+		fluidSpeed: 10,
+		devDebugMenuEnabled: false,
 		scale10xMigrated: false,
 		isFirstRan: false,
 		updateNeeded_1: true
@@ -89,6 +95,10 @@ export const Settings = () => {
 		React.useState<boolean>(
 			DataStoreService.enhancedBackgroundEnabled,
 		);
+	const [appleFluidBackgroundEnabled, setAppleFluidBackgroundState] =
+		React.useState<boolean>(
+			DataStoreService.appleFluidBackgroundEnabled ?? false,
+		);
 	const [backgroundMode, setBackgroundModeState] =
 		React.useState<'circles' | 'images'>(
 			(DataStoreService.backgroundMode as 'circles' | 'images') || 'circles',
@@ -102,6 +112,12 @@ export const Settings = () => {
 	);
 	const [circleOpacity, setCircleOpacityState] = React.useState<number>(
 		DataStoreService.circleOpacity ?? 10,
+	);
+	const [fluidSpeed, setFluidSpeedState] = React.useState<number>(
+		DataStoreService.fluidSpeed ?? 10,
+	);
+	const [devDebugMenuEnabled, setDevDebugMenuState] = React.useState<boolean>(
+		DataStoreService.devDebugMenuEnabled ?? false,
 	);
 
 	const onIntensityChange = React.useCallback((val?: any) => {
@@ -166,6 +182,19 @@ export const Settings = () => {
 		[],
 	);
 
+	const onAppleFluidBackgroundChange = React.useCallback(
+		(_: unknown, checked?: boolean) => {
+			DataStoreService.appleFluidBackgroundEnabled = !!checked;
+			setAppleFluidBackgroundState(
+				DataStoreService.appleFluidBackgroundEnabled,
+			);
+			setAppleFluidBackgroundEnabled(
+				DataStoreService.appleFluidBackgroundEnabled,
+			);
+		},
+		[],
+	);
+
 	const onBackgroundModeChange = React.useCallback(
 		(_: unknown, checked?: boolean) => {
 			DataStoreService.backgroundMode = checked ? 'images' : 'circles';
@@ -207,6 +236,23 @@ export const Settings = () => {
 		setCircleOpacityState(clamped);
 		setCircleOpacity(clamped / 10);
 	}, []);
+
+	const onFluidSpeedChange = React.useCallback((val?: any) => {
+		if (isNaN(val)) val = 10;
+		const clamped = Math.max(0, Math.min(30, Math.round(Number(val))));
+		DataStoreService.fluidSpeed = clamped;
+		setFluidSpeedState(clamped);
+		setFluidSpeed(clamped / 10);
+	}, []);
+
+	const onDevDebugMenuChange = React.useCallback(
+		(_: unknown, checked?: boolean) => {
+			DataStoreService.devDebugMenuEnabled = !!checked;
+			setDevDebugMenuState(DataStoreService.devDebugMenuEnabled);
+			setDevDebugMenuEnabled(DataStoreService.devDebugMenuEnabled);
+		},
+		[],
+	);
 
 	return (
 		<LunaSettings>
@@ -256,15 +302,21 @@ export const Settings = () => {
 				onChange={onEnhancedBackgroundChange}
 			/>
 			<AnySwitch
+				title="Apple Music Fluid Background"
+				checked={appleFluidBackgroundEnabled}
+				desc="Enable the WebGL Apple Music fluid/mesh shader background (off by default)."
+				onChange={onAppleFluidBackgroundChange}
+			/>
+			<AnySwitch
 				title="Use cover images for background"
 				checked={backgroundMode === 'images'}
-				desc="Use distorted album artwork fragments instead of plain gradient blobs."
+				desc="Uses swirled, blurred album artwork layers (Apple Music Metal style) instead of fluid mesh gradient blobs."
 				onChange={onBackgroundModeChange}
 			/>
 			<AnySwitch
 				title="Apol Music wannabe"
 				checked={apolMusicWannabeEnabled}
-				desc="Makes Enhanced Background circles shrink on bass instead of expanding."
+				desc="Viscoelastic Apple Music mode: contracts Enhanced / Apple Music Fluid background on bass hits and balances light for lyrics readability."
 				onChange={onApolMusicWannabeChange}
 			/>
 			<LunaNumberSetting
@@ -273,7 +325,7 @@ export const Settings = () => {
 				min={0}
 				max={10}
 				step={1}
-				desc="Controls how many Enhanced Background circles are rendered (0 = none, 1 = 0.1, 10 = 1.0, default: 10)"
+				desc="Controls fluid layer / mesh lobe density (0 = none, 1 = 0.1, 10 = 1.0, default: 10)"
 				onNumber={onCircleDensityChange}
 			/>
 			<LunaNumberSetting
@@ -282,8 +334,23 @@ export const Settings = () => {
 				min={0}
 				max={10}
 				step={1}
-				desc="Controls the opacity of Enhanced Background circles (0 = transparent, 1 = 0.1, 10 = 1.0, default: 10)"
+				desc="Controls fluid background opacity (0 = transparent, 1 = 0.1, 10 = 1.0, default: 10)"
 				onNumber={onCircleOpacityChange}
+			/>
+			<LunaNumberSetting
+				title="Fluid Flow Speed"
+				value={fluidSpeed}
+				min={0}
+				max={30}
+				step={1}
+				desc="Controls the speed of the Apple Music fluid background motion (1 = 0.1, 10 = 1.0, default: 10)"
+				onNumber={onFluidSpeedChange}
+			/>
+			<AnySwitch
+				title="Dev Debug Menu"
+				checked={devDebugMenuEnabled}
+				desc="Show a draggable developer overlay with live audio/WebGL telemetry and tuning controls (for debugging only)."
+				onChange={onDevDebugMenuChange}
 			/>
 		</LunaSettings>
 	);

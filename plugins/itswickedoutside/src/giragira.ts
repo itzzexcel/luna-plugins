@@ -11,8 +11,10 @@ import {
 	retrieveCoverArtPalette,
 	retrieveCoverArtDataUnified,
 } from "./ui-interface";
+import { AppleFluidRenderer } from "./appleFluidRenderer";
 
 export interface AudioAnalysis {
+	version?: number;
 	bass?: {
 		strongest?: {
 			frequency: number;
@@ -20,7 +22,7 @@ export interface AudioAnalysis {
 		};
 		average: number;
 		max: number;
-		frequency: number;
+		frequency?: number;
 	};
 	energy?: number;
 	treble?: {
@@ -50,10 +52,57 @@ export interface AudioVisualiserOptions {
 	useDynamicLerp?: boolean;
 	useDynamicIntensity?: boolean;
 	useEnhancedBackground?: boolean;
+	useAppleFluidBackground?: boolean;
 	backgroundMode?: 'circles' | 'images';
 	useApolMusicWannabe?: boolean;
 	circleDensity?: number;
 	circleOpacity?: number;
+	fluidSpeed?: number;
+}
+
+export interface VisualiserDebugState {
+	wsConnected: boolean;
+	wsReadyState: number;
+	lastPacketAgeMs: number;
+	isNowPlayingVisible: boolean;
+	animationRunning: boolean;
+	fps: number;
+	renderer: {
+		type: 'webgl' | 'css';
+		width: number;
+		height: number;
+		hasArtwork: boolean;
+		transition: number;
+		contextLost: boolean;
+	};
+	audio: {
+		trackedBass: number;
+		bass: number;
+		energy: number;
+		treble: number;
+		flowVelocity: number;
+		fluidPhase: number;
+		bpm: number;
+		lerpFactor: number;
+		isSustainedBass: boolean;
+		lastFrequency: number;
+	};
+	visuals: {
+		vignetteRgb: string;
+		palette: string[];
+		cacheEntries: number;
+		backgroundMode: 'circles' | 'images';
+		enhancedBackground: boolean;
+		appleFluidBackground: boolean;
+		apolMode: boolean;
+		intensityMultiplier: number;
+		colorSaturation: number;
+		circleDensity: number;
+		circleOpacity: number;
+		fluidSpeed: number;
+		useDynamicLerp: boolean;
+		useDynamicIntensity: boolean;
+	};
 }
 
 export interface AudioVisualiserAPI {
@@ -69,12 +118,18 @@ export interface AudioVisualiserAPI {
 	setDynamicLerpEnabled?: (enabled: boolean) => void;
 	setDynamicIntensityEnabled?: (enabled: boolean) => void;
 	setEnhancedBackground?: (enabled: boolean) => void;
+	setAppleFluidBackgroundEnabled?: (enabled: boolean) => void;
 	setBackgroundMode?: (mode: 'circles' | 'images') => void;
 	setApolMusicWannabeEnabled?: (enabled: boolean) => void;
 	setCircleDensity?: (density: number) => void;
 	setCircleOpacity?: (opacity: number) => void;
+	setFluidSpeed?: (speed: number) => void;
 	refreshAtmosphereCircles?: () => void;
-	updateCoverArt?: (coverUrl?: string) => Promise<void>;
+	updateCoverArt?: (coverUrl?: string, retryOnMiss?: boolean) => Promise<void>;
+	getDebugState?: () => VisualiserDebugState;
+	triggerDebugPulse?: (bass?: number, energy?: number, treble?: number) => void;
+	forceCoverArtRefresh?: () => Promise<void>;
+	resetPhysics?: () => void;
 }
 
 // Detects sudden bass intensity spikes for genres with dynamic bass emphasis
@@ -154,18 +209,20 @@ export class AdaptiveBassTracker {
 	public isSustainedBass: boolean = false;
 
 	process(rawIntensity: number): number {
+		const safeRaw = Number.isFinite(rawIntensity) ? Math.max(0, rawIntensity) : 0;
+
 		// Track the running floor (the sustained bass component)
-		if (rawIntensity < this.baselineFloor) {
-			this.baselineFloor += (rawIntensity - this.baselineFloor) * this.floorFallRate;
+		if (safeRaw < this.baselineFloor) {
+			this.baselineFloor += (safeRaw - this.baselineFloor) * this.floorFallRate;
 		} else {
-			this.baselineFloor += (rawIntensity - this.baselineFloor) * this.floorRiseRate;
+			this.baselineFloor += (safeRaw - this.baselineFloor) * this.floorRiseRate;
 		}
 
 		// Track running ceiling
-		if (rawIntensity > this.baselineCeiling) {
-			this.baselineCeiling = rawIntensity;
+		if (safeRaw > this.baselineCeiling) {
+			this.baselineCeiling = safeRaw;
 		} else {
-			this.baselineCeiling += (rawIntensity - this.baselineCeiling) * this.ceilingDecayRate;
+			this.baselineCeiling += (safeRaw - this.baselineCeiling) * this.ceilingDecayRate;
 		}
 		this.baselineCeiling = Math.max(this.baselineCeiling, this.baselineFloor + 0.12);
 
@@ -176,25 +233,26 @@ export class AdaptiveBassTracker {
 		const dynamicRange = Math.max(0.12, this.baselineCeiling - this.baselineFloor);
 
 		// Transient extraction: how much does this moment exceed the sustained baseline floor?
-		const transient = Math.max(0, rawIntensity - this.baselineFloor) / dynamicRange;
+		const transient = Math.max(0, safeRaw - this.baselineFloor) / dynamicRange;
 
 		// Onset: detect sudden rise (attack of drums/guitar hit)
-		const onset = Math.max(0, rawIntensity - this.lastIntensity);
-		this.lastIntensity = rawIntensity;
+		const onset = Math.max(0, safeRaw - this.lastIntensity);
+		this.lastIntensity = safeRaw;
 
 		let punch: number;
 		if (this.isSustainedBass) {
 			// Continuous heavy bass (rock, metal):
 			// Base the visual on the transient punch above the continuous floor
-			punch = transient * 0.7 + onset * 0.4 + rawIntensity * 0.2;
+			punch = transient * 0.7 + onset * 0.4 + safeRaw * 0.2;
 		} else {
 			// Electronic / synthpop / dance bursts:
 			// Combine steady energy with transient kick attack so fast tempos cut through cleanly
-			punch = Math.max(rawIntensity * 0.9, transient * 0.85 + onset * 0.35);
+			punch = Math.max(safeRaw * 0.9, transient * 0.85 + onset * 0.35);
 		}
 
-		const clamped = Math.min(1.0, Math.max(0, punch));
-		this.smoothedOutput += (clamped - this.smoothedOutput) * 0.42;
+		const clamped = Number.isFinite(punch) ? Math.min(1.0, Math.max(0, punch)) : 0;
+		const nextOut = this.smoothedOutput + (clamped - this.smoothedOutput) * 0.42;
+		this.smoothedOutput = Number.isFinite(nextOut) ? nextOut : 0;
 		return this.smoothedOutput;
 	}
 
@@ -207,24 +265,33 @@ export class AdaptiveBassTracker {
 	}
 }
 
-// Closed-form critically damped harmonic spring solver (Unity SmoothDamp / iOS CoreAnimation spring curve)
-// Mathematically guaranteed: zero oscillation, zero overshoot, zero harsh jerk, perfectly smooth C^inf trajectory
+// Closed-form asymmetric critically damped harmonic spring solver (Unity SmoothDamp / iOS CoreAnimation spring curve)
+// Separate attack & release smooth times give cushioned punchy attacks with silky organic exhales (zero overshoot/jerk)
 export class DampedSpring {
 	public value: number = 0;
 	public velocity: number = 0;
 	public target: number = 0;
-	private smoothTime: number;
+	private attackTime: number;
+	private releaseTime: number;
 
-	constructor(smoothTime = 0.08) {
-		this.smoothTime = smoothTime;
+	constructor(attackTime = 0.08, releaseTime?: number) {
+		this.attackTime = attackTime;
+		this.releaseTime = releaseTime ?? attackTime;
 	}
 
 	setTarget(target: number): void {
-		this.target = target;
+		this.target = Number.isFinite(target) ? target : 0;
 	}
 
 	setSmoothTime(smoothTime: number): void {
-		this.smoothTime = Math.max(0.035, Math.min(0.25, smoothTime));
+		const clamped = Math.max(0.025, Math.min(0.45, smoothTime));
+		this.attackTime = clamped;
+		this.releaseTime = clamped;
+	}
+
+	setAsymmetricTimes(attackTime: number, releaseTime: number): void {
+		this.attackTime = Math.max(0.025, Math.min(0.45, attackTime));
+		this.releaseTime = Math.max(0.035, Math.min(0.55, releaseTime));
 	}
 
 	// Backwards compatibility if setParameters is invoked
@@ -236,7 +303,8 @@ export class DampedSpring {
 
 	update(dt: number): number {
 		const clampedDt = Math.max(0.001, Math.min(dt, 0.05));
-		const omega = 2 / Math.max(0.001, this.smoothTime);
+		const activeSmoothTime = this.target > this.value ? this.attackTime : this.releaseTime;
+		const omega = 2 / Math.max(0.001, activeSmoothTime);
 		const x = omega * clampedDt;
 		// 4th order rational approximation of exp(-omega * dt)
 		const exp = 1 / (1 + x + 0.48 * x * x + 0.235 * x * x * x);
@@ -246,6 +314,11 @@ export class DampedSpring {
 		
 		this.velocity = (this.velocity - omega * temp) * exp;
 		this.value = this.target + (change + temp) * exp;
+
+		if (!Number.isFinite(this.value) || !Number.isFinite(this.velocity)) {
+			this.value = 0;
+			this.velocity = 0;
+		}
 
 		return this.value;
 	}
@@ -263,36 +336,44 @@ export class DampedSpring {
 	}
 }
 
-// Multi-band dynamics engine: analytical smooth-damp solvers for Bass, Treble, and Broadband Energy
+// Multi-band dynamics engine: asymmetric smooth-damp solvers for Bass, Treble, Broadband Energy, and Fluid Velocity
 export class AudioDynamicsEngine {
-	public bassSpring = new DampedSpring(0.078);   // Responsive bass punch with silky organic recovery
-	public energySpring = new DampedSpring(0.14);  // Smooth, luminous broadband energy
-	public trebleSpring = new DampedSpring(0.085); // Gentle transient shimmer for cymbals/hi-hats
+	public bassSpring = new DampedSpring(0.052, 0.175);         // Cushioned beat attack + velvety elastic release
+	public energySpring = new DampedSpring(0.11, 0.28);          // Luminous ambient energy swell
+	public trebleSpring = new DampedSpring(0.048, 0.14);         // Crisp treble transient shimmer
+	public flowVelocitySpring = new DampedSpring(0.075, 0.42);   // Smooth forward fluid momentum surge on kicks
 
 	public fluidPhase: number = 0;
+	public swirlPhase: number = 0;
 	public currentBPM: number = 120;
+	public fluidSpeed: number = 1.0;
+
+	setFluidSpeed(speed: number): void {
+		this.fluidSpeed = Math.max(0, Math.min(3, speed));
+	}
 
 	setBPM(bpm: number): void {
 		if (!bpm || bpm <= 0) return;
 		this.currentBPM = bpm;
 
-		// Adapt smoothTime gracefully based on tempo:
-		// At 80 BPM: ~0.095s (deep, slow breathing)
-		// At 120 BPM: 0.078s (standard punch)
-		// At 169 BPM (e.g. weathergirl): 0.056s (cleanly tracks consecutive 177ms eighth-note kicks with zero jitter!)
-		const bpmScale = Math.max(0.75, Math.min(1.8, bpm / 120));
-		this.bassSpring.setSmoothTime(0.078 / bpmScale);
-		this.trebleSpring.setSmoothTime(0.085 / bpmScale);
-		this.energySpring.setSmoothTime(0.13 / bpmScale);
+		// Scale attack & release smoothly with tempo:
+		// At 80 BPM: deeper, unhurried breathing (~69ms attack / ~233ms release)
+		// At 120 BPM: 52ms attack / 175ms release
+		// At 169 BPM: ~37ms attack / ~124ms release — tracks fast 177ms hits with glassy smoothness
+		const bpmScale = Math.max(0.75, Math.min(1.85, bpm / 120));
+		this.bassSpring.setAsymmetricTimes(0.052 / bpmScale, 0.175 / bpmScale);
+		this.trebleSpring.setAsymmetricTimes(0.048 / bpmScale, 0.14 / bpmScale);
+		this.energySpring.setAsymmetricTimes(0.11 / bpmScale, 0.26 / bpmScale);
 	}
 
 	updateAudio(analysis: AudioAnalysis, trackedBassIntensity: number, intensityMultiplier = 1): void {
-		if (analysis.bpm) {
+		if (analysis.bpm && analysis.bpm > 0) {
 			this.setBPM(analysis.bpm);
 		}
 
 		// 1. Bass Target with gentle soft-knee compression
-		const rawBass = trackedBassIntensity * (intensityMultiplier * 0.5);
+		const safeBass = Number.isFinite(trackedBassIntensity) ? Math.max(0, trackedBassIntensity) : 0;
+		const rawBass = safeBass * (intensityMultiplier * 0.5);
 		const compressedBass = rawBass <= 0.75
 			? rawBass
 			: 0.75 + Math.tanh((rawBass - 0.75) * 0.5) * 0.3;
@@ -301,14 +382,15 @@ export class AudioDynamicsEngine {
 		this.bassSpring.setTarget(targetBass);
 
 		// 2. Broadband Energy Target
-		const rawEnergy = typeof analysis.energy === 'number' ? analysis.energy : 0.3;
-		const energyTarget = Math.min(1.0, Math.max(0.1, rawEnergy * 1.1));
+		const rawEnergy = typeof analysis.energy === 'number' && Number.isFinite(analysis.energy) ? analysis.energy : 0.15;
+		const energyTarget = Math.min(1.0, Math.max(0.08, rawEnergy * 1.1));
 		this.energySpring.setTarget(energyTarget);
 
 		// 3. Treble Target (hi-hats, cymbals, snare snap, vocaloid air)
-		const trebleAvg = analysis.treble?.average ?? 0;
-		const trebleMag = analysis.treble?.strongest?.magnitude ?? 0;
-		const rawTreble = Math.min(1.0, trebleAvg * 60000 + trebleMag * 70);
+		const scale = (analysis.version ?? 1) >= 2 ? 1 : 2048;
+		const trebleAvg = (analysis.treble?.average ?? 0) * scale;
+		const trebleMag = (analysis.treble?.strongest?.magnitude ?? 0) * scale;
+		const rawTreble = Math.min(1.0, trebleAvg * 320 + trebleMag * 30);
 		this.trebleSpring.setTarget(rawTreble);
 	}
 
@@ -317,24 +399,31 @@ export class AudioDynamicsEngine {
 		energy: number;
 		treble: number;
 		fluidPhase: number;
+		swirlPhase: number;
 	} {
 		const bass = Math.max(0, this.bassSpring.update(dt));
 		const energy = Math.max(0, this.energySpring.update(dt));
 		const treble = Math.max(0, this.trebleSpring.update(dt));
 
-		// Fluid phase velocity: gentle, organic floating drift
-		const bpmTempoFactor = Math.max(0.85, Math.min(1.35, this.currentBPM / 120));
-		const phaseSpeed = (0.32 + energy * 0.35 + treble * 0.15) * bpmTempoFactor;
-		this.fluidPhase += dt * phaseSpeed;
+		// Smooth monotonic forward fluid surge driven by kicks, energy, treble, and user fluidSpeed
+		const bpmTempoFactor = Math.max(0.8, Math.min(1.45, this.currentBPM / 120));
+		const targetFlow = (0.28 + energy * 0.55 + bass * 0.90 + treble * 0.25) * bpmTempoFactor * this.fluidSpeed;
+		this.flowVelocitySpring.setTarget(targetFlow);
+		const flowVel = Math.max(0.05 * this.fluidSpeed, this.flowVelocitySpring.update(dt));
 
-		return { bass, energy, treble, fluidPhase: this.fluidPhase };
+		this.fluidPhase += dt * flowVel;
+		this.swirlPhase += dt * (0.16 + energy * 0.28 + bass * 0.22) * bpmTempoFactor * this.fluidSpeed;
+
+		return { bass, energy, treble, fluidPhase: this.fluidPhase, swirlPhase: this.swirlPhase };
 	}
 
 	reset(): void {
 		this.bassSpring.reset();
 		this.energySpring.reset();
 		this.trebleSpring.reset();
+		this.flowVelocitySpring.reset();
 		this.fluidPhase = 0;
+		this.swirlPhase = 0;
 		this.currentBPM = 120;
 	}
 }
@@ -356,19 +445,20 @@ class DynamicIntensityController {
 		const bass = analysis.bass;
 		if (!bass) return 0;
 
-		// Broaden bass frequency range to 20-220Hz (accommodates rock bass guitar fundamentals & harmonics)
-		const isRealBass = bass.frequency >= 20 && bass.frequency <= 200;
-		const bassFreqFactor = isRealBass ? 1.0 : Math.max(0.2, 1 - (bass.frequency - 200) / 100);
-		
-		// When we get real bass, crank it up based on how thick it feels
-		// Higher multiplier for fast-changing bass (DnB style)
-		const bassMag = bass.strongest?.magnitude ?? 0;
-		const rawBassPresence = isRealBass 
-			? Math.min(bass.average * 18000, 1) * (1 + Math.min(1.2, bassMag * 120))
-			: Math.min(bass.average * 12000, 1) * (1 + Math.min(0.8, bassMag * 60));
-		
-		const freqSpread = Math.min(bass.frequency / 200, 1);
-		const magnitudeStrength = Math.min(bassMag * 140, 1);  // More sensitive
+		const bassFreq = bass.strongest?.frequency ?? bass.frequency ?? 0;
+		const scale = (analysis.version ?? 1) >= 2 ? 1 : 2048;
+		const bassAvg = Math.max(0, (bass.average ?? 0) * scale);
+		const bassMag = Math.max(0, (bass.strongest?.magnitude ?? 0) * scale);
+
+		const isRealBass = bassFreq >= 20 && bassFreq <= 220;
+		const bassFreqFactor = isRealBass ? 1.0 : Math.max(0.25, 1 - Math.max(0, bassFreq - 220) / 140);
+
+		const rawBassPresence = isRealBass
+			? Math.min(bassAvg * 20, 1) * (1 + Math.min(1.0, bassMag * 8))
+			: Math.min(bassAvg * 14, 1) * (1 + Math.min(0.7, bassMag * 5));
+
+		const freqSpread = Math.min(Math.max(0, bassFreq) / 220, 1);
+		const magnitudeStrength = Math.min(bassMag * 10, 1);
 
 		// Smooth it out with momentum to prevent jittery jumps
 		const effectiveSmoothing = isRealBass ? this.smoothingFactor : this.decaySmoothingFactor;
@@ -380,7 +470,7 @@ class DynamicIntensityController {
 
 		// Mix it all together: bass weight matters most, frequency context a little, punch even less
 		let dynamicIntensity =
-			this.bassPresence * 0.75 +  // Increased bass weight
+			this.bassPresence * 0.75 +
 			this.frequencySpread * 0.12 +
 			(magnitudeStrength * bassFreqFactor) * 0.13;
 
@@ -388,7 +478,7 @@ class DynamicIntensityController {
 		const spikeMultiplier = this.bassSpikeDetector.getSpikeMultiplier();
 		dynamicIntensity *= spikeMultiplier;
 
-		return Math.min(dynamicIntensity, 1);
+		return Number.isFinite(dynamicIntensity) ? Math.min(Math.max(0, dynamicIntensity), 1) : 0;
 	}
 
 	reset(): void {
@@ -472,9 +562,9 @@ class SongAdaptationController {
 
 		this.analysisHistory.push({
 			intensity: currentIntensity,
-			frequency: analysis.bass?.frequency ?? 100,
+			frequency: analysis.bass?.strongest?.frequency ?? analysis.bass?.frequency ?? 100,
 			magnitude: analysis.bass?.strongest?.magnitude ?? 0,
-			bpm: analysis.bpm ?? 120,
+			bpm: analysis.bpm && analysis.bpm > 0 ? analysis.bpm : 0,
 			spikeLevel: spikeLevel,
 			timestamp: now,
 		});
@@ -514,9 +604,11 @@ class SongAdaptationController {
 		// Steady beat like a DJ set, or all over the place like prog rock?
 		this.consistencyFactor = Math.max(0, 1 - this.variability * 2);
 
-		// Calculate average BPM for high-BPM genre detection
-		const bpms = this.analysisHistory.map(a => a.bpm);
-		this.averageBPM = bpms.reduce((a, b) => a + b, 0) / bpms.length;
+		// Calculate average BPM from valid positive readings so 0 BPM frames don't drag down tempo
+		const validBpms = this.analysisHistory.filter(a => a.bpm > 0).map(a => a.bpm);
+		if (validBpms.length > 0) {
+			this.averageBPM = validBpms.reduce((a, b) => a + b, 0) / validBpms.length;
+		}
 
 		// How often do bass spikes happen? (0-1 scale)
 		const spikeReadings = this.analysisHistory.map(a => a.spikeLevel);
@@ -617,6 +709,7 @@ export class AudioVisualiser implements AudioVisualiserAPI {
 	private reconnectAttempts = 0;
 
 	private elements: {
+		visualiser: HTMLElement;
 		vignette: HTMLElement;
 		glowLayer: HTMLElement;
 	};
@@ -655,10 +748,24 @@ export class AudioVisualiser implements AudioVisualiserAPI {
 	private lastCoverCheckTime: number = 0;
 	private currentAppliedCoverUrl: string | null = '__init__';
 	private cachedAtmospherePalette: string[] = [];
-	private imageCache: Map<string, { colour: string; palette: string[]; timestamp: number }> = new Map();
+	private imageCache: Map<string, { colour: string; palette: string[]; pixels: Uint8Array | null; timestamp: number }> = new Map();
 	private readonly CACHE_TTL = 300000; // 5 minutes
 	private atmosphereLayer: HTMLElement | null = null;
 	private coverSpinner: HTMLElement | null = null;
+	private fluidRenderer: AppleFluidRenderer | null = null;
+	private fluidInitFailed = false;
+	private resizeObserver: ResizeObserver | null = null;
+	private coverArtObserver: MutationObserver | null = null;
+	private observedImageryEl: Element | null = null;
+	private coverRetryTimers: number[] = [];
+	private currentVignetteRgb: [number, number, number] = [255, 255, 255];
+	private targetVignetteRgb: [number, number, number] = [255, 255, 255];
+	private hasInitializedColor = false;
+	private lastWsMessageTime = 0;
+	private smoothedFps = 0;
+	private lastTrackedBass = 0;
+	private lastDynamics = { bass: 0, energy: 0, treble: 0, fluidPhase: 0, swirlPhase: 0 };
+	private debugPulseTimer: number | null = null;
 	private atmosphereCircles: Array<{
 		element: HTMLElement;
 		baseX: number;
@@ -694,10 +801,12 @@ export class AudioVisualiser implements AudioVisualiserAPI {
 			useDynamicIntensity: false,
 			isNowPlayingVisible: false,
 			useEnhancedBackground: false,
+			useAppleFluidBackground: false,
 			backgroundMode: 'circles',
 			useApolMusicWannabe: false,
 			circleDensity: 1,
 			circleOpacity: 1,
+			fluidSpeed: 1,
 			...options,
 		};
 
@@ -715,16 +824,30 @@ export class AudioVisualiser implements AudioVisualiserAPI {
 		this.bassSpikeDetector = new BassSpikeDetector();
 		this.adaptiveBassTracker = new AdaptiveBassTracker();
 		this.dynamicsEngine = new AudioDynamicsEngine();
+		this.dynamicsEngine.setFluidSpeed(this.options.fluidSpeed);
 
 		this.container = this.resolveContainer(containerSelector);
 		this.ensureContainerPosition();
 		this.overlayWrapper = this.createOverlayWrapper();
-		this.atmosphereLayer = this.createAtmosphereLayer();
 		this.elements = this.createDOMStructure();
-		this.atmosphereLayer.style.opacity = this.options.useEnhancedBackground ? '1' : '0';
+		this.atmosphereLayer = this.createAtmosphereLayer();
+		this.atmosphereLayer.style.opacity = (this.options.useEnhancedBackground || this.options.useAppleFluidBackground) ? '1' : '0';
+		if (typeof ResizeObserver !== 'undefined') {
+			this.resizeObserver = new ResizeObserver(() => {
+				this.fluidRenderer?.resize(
+					this.container.offsetWidth || window.innerWidth,
+					this.container.offsetHeight || window.innerHeight
+				);
+			});
+			this.resizeObserver.observe(this.container);
+		}
 		document.addEventListener('visibilitychange', this.onVisibilityChange);
+		this.attachCoverArtObserver();
 		this.startMemorySweep();
 		this.updateCoverArt();
+		if (this.options.isNowPlayingVisible && !document.hidden) {
+			this.startAnimationLoop();
+		}
 		this.connect();
 	}
 
@@ -756,6 +879,7 @@ export class AudioVisualiser implements AudioVisualiserAPI {
             height: 100% !important;
             overflow: hidden !important;
             pointer-events: none !important;
+            isolation: isolate !important;
             z-index: ${this.options.zIndex} !important;
         `;
 		this.container.appendChild(wrapper);
@@ -771,6 +895,8 @@ export class AudioVisualiser implements AudioVisualiserAPI {
             width: 100% !important;
             height: 100% !important;
             background: transparent !important;
+            pointer-events: none !important;
+            z-index: 1 !important;
         `;
 
 		const glowLayer = document.createElement('div');
@@ -781,8 +907,10 @@ export class AudioVisualiser implements AudioVisualiserAPI {
             width: 100% !important;
             height: 100% !important;
             pointer-events: none !important;
+            mix-blend-mode: screen !important;
+            z-index: 2 !important;
             will-change: opacity !important;
-            opacity: 0 !important;
+            opacity: 0;
         `;
 
 		const vignette = document.createElement('div');
@@ -793,7 +921,8 @@ export class AudioVisualiser implements AudioVisualiserAPI {
             width: 100% !important;
             height: 100% !important;
             pointer-events: none !important;
-            opacity: 0.2 !important;
+            z-index: 3 !important;
+            opacity: 0.2;
             will-change: opacity !important;
         `;
 
@@ -814,7 +943,7 @@ export class AudioVisualiser implements AudioVisualiserAPI {
             color: #ff3232 !important;
             border: 1px solid rgba(255, 50, 50, 0.3) !important;
             display: ${this.options.showStatus ? 'block' : 'none'} !important;
-            z-index: ${this.options.zIndex} !important;
+            z-index: 4 !important;
         `;
 
 		const stats = document.createElement('div');
@@ -825,7 +954,7 @@ export class AudioVisualiser implements AudioVisualiserAPI {
             transform: translateX(-50%) !important;
             display: ${this.options.showStats ? 'flex' : 'none'} !important;
             gap: 20px !important;
-            z-index: ${this.options.zIndex} !important;
+            z-index: 4 !important;
             pointer-events: all !important;
         `;
 
@@ -880,6 +1009,7 @@ export class AudioVisualiser implements AudioVisualiserAPI {
 		this.overlayWrapper.appendChild(stats);
 
 		return {
+			visualiser,
 			vignette,
 			glowLayer,
 			status,
@@ -1062,17 +1192,18 @@ export class AudioVisualiser implements AudioVisualiserAPI {
 		}
 	}
 
-	private async fetchCoverArtData(coverUrl: string): Promise<{ colour: string; palette: string[] }> {
+	private async fetchCoverArtData(coverUrl: string): Promise<{ colour: string; palette: string[]; pixels: Uint8Array | null }> {
 		// Already grabbed this cover? Use it
 		const cached = this.imageCache.get(coverUrl);
 		const now = Date.now();
 		if (cached && (now - cached.timestamp) < this.CACHE_TTL) {
-			return { colour: cached.colour, palette: cached.palette };
+			return { colour: cached.colour, palette: cached.palette, pixels: cached.pixels };
 		}
 
-		const result: { colour: string; palette: string[] } = {
+		const result: { colour: string; palette: string[]; pixels: Uint8Array | null } = {
 			colour: '255, 255, 255',
 			palette: [],
+			pixels: null,
 		};
 
 		let blobUrl: string | null = null;
@@ -1104,6 +1235,7 @@ export class AudioVisualiser implements AudioVisualiserAPI {
 			result.palette = unified.palette && unified.palette.length > 0
 				? unified.palette.map(c => this.formatRgbColor(c))
 				: [this.formatRgbColor(unified.colour)];
+			result.pixels = AppleFluidRenderer.extractArtworkPixels(tempImg);
 		} catch (error) {
 			console.error('[reactivo] Error fetching cover art data:', error);
 		} finally {
@@ -1117,8 +1249,8 @@ export class AudioVisualiser implements AudioVisualiserAPI {
 			}
 		}
 
-		// Cap imageCache to max 30 entries (LRU-like eviction) to prevent long-session memory leaks
-		if (this.imageCache.size >= 30) {
+		// Cap imageCache to max 15 entries (15 * 16KB pixels = ~240KB max)
+		if (this.imageCache.size >= 15) {
 			const oldestKey = this.imageCache.keys().next().value;
 			if (oldestKey) this.imageCache.delete(oldestKey);
 		}
@@ -1128,6 +1260,7 @@ export class AudioVisualiser implements AudioVisualiserAPI {
 			this.imageCache.set(coverUrl, {
 				colour: result.colour,
 				palette: result.palette,
+				pixels: result.pixels,
 				timestamp: Date.now()
 			});
 		}
@@ -1136,9 +1269,78 @@ export class AudioVisualiser implements AudioVisualiserAPI {
 	}
 
 	private createAtmosphereLayer(): HTMLElement {
-		let targetBlur = DataStoreService.backgroundMode === 'images' ? 35 : 48;
-		
 		const layer = document.createElement('div');
+		// Mount inside visualiser right before glowLayer & vignette so fluid shares their stacking height without covering vignette
+		this.elements.visualiser.insertBefore(layer, this.elements.visualiser.firstChild);
+		this.configureAtmosphereLayerForMode(layer, '0');
+		return layer;
+	}
+
+	private configureAtmosphereLayerForMode(
+		layer: HTMLElement | null = this.atmosphereLayer,
+		initialOpacity?: string
+	): void {
+		if (!layer) return;
+		const preservedOpacity = initialOpacity ?? (layer.style.opacity || '0');
+		const wantFluid = !!(this.options.useAppleFluidBackground || DataStoreService.appleFluidBackgroundEnabled == true);
+
+		if (wantFluid && !this.fluidInitFailed) {
+			if (!this.fluidRenderer) {
+				this.fluidRenderer = new AppleFluidRenderer(layer);
+			}
+
+			if (!this.fluidRenderer.isSupported) {
+				this.fluidInitFailed = true;
+			} else {
+				// Clear CSS fallback circles and spinner when WebGL fluid shader owns the layer
+				while (this.atmosphereCircles.length > 0) {
+					const circle = this.atmosphereCircles.pop();
+					circle?.element.remove();
+				}
+				if (this.coverSpinner) {
+					this.coverSpinner.remove();
+					this.coverSpinner = null;
+				}
+
+				layer.style.cssText = `
+        position: absolute !important;
+        top: 0 !important;
+        left: 0 !important;
+        right: 0 !important;
+        bottom: 0 !important;
+        width: 100% !important;
+        height: 100% !important;
+        overflow: hidden !important;
+        pointer-events: none !important;
+        opacity: ${preservedOpacity};
+        transition: opacity 0.45s ease-out;
+        z-index: 1 !important;
+        will-change: opacity;
+    `;
+				this.fluidRenderer.resize(
+					this.container.offsetWidth || window.innerWidth,
+					this.container.offsetHeight || window.innerHeight
+				);
+				if (this.cachedAtmospherePalette.length > 0) {
+					this.fluidRenderer.setPalette(this.cachedAtmospherePalette);
+				}
+				const cachedPixels = this.lastCoverUrl ? this.imageCache.get(this.lastCoverUrl)?.pixels : null;
+				if (cachedPixels) {
+					this.fluidRenderer.setArtworkPixels(cachedPixels);
+				}
+				return;
+			}
+		} else if (!wantFluid) {
+			this.fluidInitFailed = false;
+		}
+
+		// Classic CSS circles / fallback mode: ensure WebGL context & canvas are completely freed
+		if (this.fluidRenderer) {
+			this.fluidRenderer.destroy();
+			this.fluidRenderer = null;
+		}
+
+		const targetBlur = this.options.backgroundMode === 'images' ? 35 : 48;
 		layer.style.cssText = `
         position: absolute !important;
         top: 50% !important;
@@ -1148,29 +1350,32 @@ export class AudioVisualiser implements AudioVisualiserAPI {
         transform: translate(-50%, -50%) !important;
         overflow: hidden !important;
         pointer-events: none !important;
-        filter: blur(${targetBlur}px) contrast(1.12) brightness(0.52) saturate(${this.options.colorSaturation ?? 1}) !important;
-        opacity: 0 !important;
-        transition: opacity 0.35s ease-out !important;
-        z-index: ${this.options.zIndex} !important;
-        will-change: opacity !important;
+        filter: blur(${targetBlur}px) contrast(1.12) brightness(0.52) saturate(${this.options.colorSaturation ?? 1});
+        opacity: ${preservedOpacity};
+        transition: opacity 0.35s ease-out;
+        z-index: 1 !important;
+        will-change: opacity;
     `;
 
-		const spinner = document.createElement('div');
-		spinner.style.cssText = `
-        position: absolute !important;
-        inset: 0 !important;
-        pointer-events: none !important;
-        background-size: cover !important;
-        background-position: center center !important;
-        background-repeat: no-repeat !important;
-        transform-origin: center center !important;
-        will-change: transform, background-position, opacity !important;
+		if (!this.coverSpinner) {
+			const spinner = document.createElement('div');
+			spinner.style.cssText = `
+        position: absolute;
+        inset: 0;
+        pointer-events: none;
+        background-size: cover;
+        background-position: center center;
+        background-repeat: no-repeat;
+        transform-origin: center center;
+        will-change: transform, background-position, opacity;
     `;
+			layer.appendChild(spinner);
+			this.coverSpinner = spinner;
+		}
 
-		layer.appendChild(spinner);
-		this.coverSpinner = spinner;
-		this.overlayWrapper.appendChild(layer);
-		return layer;
+		if ((this.options.useEnhancedBackground || (wantFluid && this.fluidInitFailed)) && this.cachedAtmospherePalette.length > 0) {
+			this.createAtmosphereCircles(this.cachedAtmospherePalette);
+		}
 	}
 
 	private createAtmosphereCircles(colors: string[]): void {
@@ -1550,6 +1755,7 @@ export class AudioVisualiser implements AudioVisualiserAPI {
 				try {
 					const data: AudioAnalysis[] = JSON.parse(event.data);
 					if (Array.isArray(data) && data.length > 0) {
+						this.lastWsMessageTime = performance.now();
 						this.pendingAudioData = data[0];
 						
 						// Fire up the animation loop if it's not running
@@ -1599,7 +1805,18 @@ export class AudioVisualiser implements AudioVisualiserAPI {
 
 	public togglePause(pause: boolean): void {
 		this.options.isNowPlayingVisible = pause;
-		if (!pause) {
+		if (pause) {
+			this.attachCoverArtObserver();
+			this.updateCoverArt(undefined, true);
+			this.fluidRenderer?.resize(
+				this.container.offsetWidth || window.innerWidth,
+				this.container.offsetHeight || window.innerHeight
+			);
+			if (!this.animationFrameId && !document.hidden) {
+				this.startAnimationLoop();
+			}
+		} else {
+			this.stopAnimationLoop();
 			this.adaptiveBassTracker?.reset();
 			this.songAdaptationController?.reset();
 			this.bassSpikeDetector?.reset();
@@ -1636,22 +1853,22 @@ export class AudioVisualiser implements AudioVisualiserAPI {
 
 		const strongestBass = analysis.bass?.strongest;
 		const bassAverage = analysis.bass?.average || 0;
+		const scale = (analysis.version ?? 1) >= 2 ? 1 : 2048;
 
-		if (!strongestBass) {
-			return;
+		let baseIntensity = 0;
+		if (strongestBass) {
+			this.lastFrequency = strongestBass.frequency;
+			baseIntensity = this.calculateBaseIntensity(strongestBass, bassAverage, scale);
+
+			if (this.options.useDynamicIntensity) {
+				const dynamicFactor = this.dynamicIntensityController.calculateDynamicIntensity(analysis);
+				baseIntensity = Math.max(baseIntensity, dynamicFactor * 0.5);
+			}
 		}
 
-		this.lastFrequency = strongestBass.frequency;
-
-		let baseIntensity = this.calculateBaseIntensity(strongestBass, bassAverage);
-
-		if (this.options.useDynamicIntensity) {
-			const dynamicFactor = this.dynamicIntensityController.calculateDynamicIntensity(analysis);
-			baseIntensity = Math.max(baseIntensity, dynamicFactor * 0.5);
-		}
-
-		// Process through adaptive baseline tracker to extract transients from continuous heavy bass
+		// Process through adaptive baseline tracker (feeding 0 on silence lets springs settle smoothly to rest)
 		const trackedIntensity = this.adaptiveBassTracker.process(baseIntensity);
+		this.lastTrackedBass = trackedIntensity;
 
 		// Let the song shape how intense things get
 		const adaptiveIntensityMultiplier = this.songAdaptationController.getAdaptiveIntensityMultiplier();
@@ -1677,28 +1894,28 @@ export class AudioVisualiser implements AudioVisualiserAPI {
 		this.updateTargetValues(totalIntensity);
 	}
 
-	private calculateBaseIntensity(strongestBass: any, bassAverage: number): number {
-		// Broaden real bass range: Electric bass fundamentals span 40Hz (E1) to ~200Hz+ (G3/harmonics).
-		// Rock rhythm guitars also have heavy energy between 100-220Hz.
-		const freq = strongestBass.frequency;
+	private calculateBaseIntensity(strongestBass: any, bassAverage: number, scale: number = 1): number {
+		// Bass band spans 20-220Hz so both sub kicks and electric bass fundamentals hit cleanly
+		const freq = strongestBass?.frequency ?? 100;
 		let freqWeight: number;
 
-		if (freq >= 20 && freq <= 170) {
-			freqWeight = Math.max(0.4, 1 - (freq - 20) / 220);
-		} else if (freq > 170 && freq <= 260) {
-			freqWeight = 0.4 * Math.max(0.1, 1 - (freq - 170) / 100);
+		if (freq >= 20 && freq <= 120) {
+			freqWeight = 1.0;
+		} else if (freq > 120 && freq <= 220) {
+			freqWeight = 1.0 - ((freq - 120) / 100) * 0.35;
 		} else {
-			freqWeight = 0.1;
+			freqWeight = 0.35;
 		}
 
-		// Peak magnitude boost:
-		// Backend strongestBass.magnitude is normalized by 1/2048 (~0.001 to ~0.012).
-		// Scaling by 120 gives real kicks and bass attacks a punchy boost!
-		const peakBoost = Math.min(1.2, (strongestBass.magnitude ?? 0) * 120);
-		const magnitudeMultiplier = 1 + peakBoost * 1.5;
-		const magnitudeIntensity = Math.min(bassAverage * 10000, 1) * magnitudeMultiplier;
+		const normAvg = Math.max(0, bassAverage * scale);
+		const normMag = Math.max(0, (strongestBass?.magnitude ?? 0) * scale);
 
-		return Math.min(1.2, freqWeight * magnitudeIntensity);
+		const avgComponent = Math.min(normAvg * 15, 1.0);
+		const peakBoost = Math.min(1.0, normMag * 7.5);
+		const magnitudeIntensity = avgComponent * (1 + peakBoost * 0.85);
+		const result = freqWeight * magnitudeIntensity;
+
+		return Number.isFinite(result) ? Math.min(1.2, result) : 0;
 	}
 
 	private updateTargetValues(totalIntensity: number): void {
@@ -1739,12 +1956,67 @@ export class AudioVisualiser implements AudioVisualiserAPI {
 		);
 	}
 
-	public async updateCoverArt(specifiedUrl?: string): Promise<void> {
+	private clearCoverRetryTimers(): void {
+		for (let i = 0; i < this.coverRetryTimers.length; i++) {
+			clearTimeout(this.coverRetryTimers[i]);
+		}
+		this.coverRetryTimers.length = 0;
+	}
+
+	private attachCoverArtObserver(): void {
+		if (typeof MutationObserver === 'undefined') return;
+		const imagery = document.querySelector('[data-test="current-media-imagery"]');
+		if (!imagery || imagery === this.observedImageryEl) return;
+
+		this.coverArtObserver?.disconnect();
+		this.observedImageryEl = imagery;
+		this.coverArtObserver = new MutationObserver(() => {
+			this.updateCoverArt();
+		});
+		this.coverArtObserver.observe(imagery, {
+			childList: true,
+			subtree: true,
+			attributes: true,
+			attributeFilter: ['src', 'poster'],
+		});
+	}
+
+	private setTargetVignetteColor(rgbString: string): void {
+		const match = rgbString.match(/(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/);
+		if (!match) return;
+		const r = Number(match[1]);
+		const g = Number(match[2]);
+		const b = Number(match[3]);
+		this.targetVignetteRgb[0] = r;
+		this.targetVignetteRgb[1] = g;
+		this.targetVignetteRgb[2] = b;
+		if (!this.hasInitializedColor) {
+			this.currentVignetteRgb[0] = r;
+			this.currentVignetteRgb[1] = g;
+			this.currentVignetteRgb[2] = b;
+			this.hasInitializedColor = true;
+		}
+	}
+
+	public async updateCoverArt(specifiedUrl?: string, retryOnMiss = false): Promise<void> {
+		this.attachCoverArtObserver();
+
+		if (retryOnMiss) {
+			this.clearCoverRetryTimers();
+			// Tidal often swaps DOM album art 150-400ms after onMediaTransition fires
+			this.coverRetryTimers.push(
+				window.setTimeout(() => this.updateCoverArt(), 250),
+				window.setTimeout(() => this.updateCoverArt(), 750)
+			);
+		}
+
 		const artworkColourEnabled = DataStoreService.vignetteUsesArtworkColourEnabled == true;
 		const enhancedBackgroundEnabled = DataStoreService.enhancedBackgroundEnabled == true;
+		const fluidEnabled = this.options.useAppleFluidBackground || DataStoreService.appleFluidBackgroundEnabled == true;
 
-		if (!artworkColourEnabled && !enhancedBackgroundEnabled && this.options.backgroundMode !== 'images') {
+		if (!artworkColourEnabled && !enhancedBackgroundEnabled && !fluidEnabled && this.options.backgroundMode !== 'images') {
 			this.cachedVignetteColour = "255, 255, 255";
+			this.setTargetVignetteColor("255, 255, 255");
 			this.cachedAtmospherePalette = [];
 			this.lastCoverUrl = null;
 			return;
@@ -1759,66 +2031,123 @@ export class AudioVisualiser implements AudioVisualiserAPI {
 		this.lastCoverUrl = coverUrl;
 
 		try {
-			const { colour, palette } = await this.fetchCoverArtData(coverUrl);
+			const { colour, palette, pixels } = await this.fetchCoverArtData(coverUrl);
 			this.cachedVignetteColour = colour && colour !== '255, 255, 255' ? colour : '255, 255, 255';
-			this.updateAtmosphereLayerBackground(coverUrl);
-
-			if (enhancedBackgroundEnabled && palette.length > 0) {
-				this.createAtmosphereCircles(palette);
-			}
-
+			this.setTargetVignetteColor(this.cachedVignetteColour);
 			this.cachedAtmospherePalette = palette;
+
+			if ((this.options.useAppleFluidBackground || DataStoreService.appleFluidBackgroundEnabled == true) && this.fluidRenderer?.isSupported) {
+				if (palette.length > 0) {
+					this.fluidRenderer.setPalette(palette);
+				}
+				if (pixels) {
+					this.fluidRenderer.setArtworkPixels(pixels);
+				}
+			} else {
+				this.updateAtmosphereLayerBackground(coverUrl);
+				if ((enhancedBackgroundEnabled || (fluidEnabled && this.fluidInitFailed)) && palette.length > 0) {
+					this.createAtmosphereCircles(palette);
+				}
+			}
 		} catch (error) {
 			console.error('[reactivo] Error loading cover art:', error);
 			this.cachedVignetteColour = '255, 255, 255';
+			this.setTargetVignetteColor('255, 255, 255');
 			this.cachedAtmospherePalette = [];
 		} finally {
 			this.isLoadingCoverArt = false;
 		}
 	}
 
-	private applyEffects(frequency: number, dynamics?: { bass: number; energy: number; treble: number; fluidPhase: number }): void {
+	private applyEffects(
+		frequency: number,
+		dynamics?: { bass: number; energy: number; treble: number; fluidPhase: number; swirlPhase?: number },
+		dt: number = 1 / 60
+	): void {
 		const saturation = this.options.colorSaturation ?? 1;
-		const vignetteColour = this.applySaturationToRgb(this.cachedVignetteColour, saturation);
+
+		// Smooth ~0.9s RGB crossfade between track colors for glow & vignette
+		const colorLerp = 1 - Math.exp(-Math.max(0.001, Math.min(dt, 0.1)) * 3.2);
+		this.currentVignetteRgb[0] += (this.targetVignetteRgb[0] - this.currentVignetteRgb[0]) * colorLerp;
+		this.currentVignetteRgb[1] += (this.targetVignetteRgb[1] - this.currentVignetteRgb[1]) * colorLerp;
+		this.currentVignetteRgb[2] += (this.targetVignetteRgb[2] - this.currentVignetteRgb[2]) * colorLerp;
+
+		const rawRgb = `${Math.round(this.currentVignetteRgb[0])}, ${Math.round(this.currentVignetteRgb[1])}, ${Math.round(this.currentVignetteRgb[2])}`;
+		const vignetteColour = this.applySaturationToRgb(rawRgb, saturation);
+		const enhancedOn = DataStoreService.enhancedBackgroundEnabled == true;
+		const wantFluid = !!(this.options.useAppleFluidBackground || DataStoreService.appleFluidBackgroundEnabled == true);
+
+		// Lazily synchronize WebGL fluid renderer if option/storage changed out of band
+		if (wantFluid && !this.fluidRenderer && !this.fluidInitFailed) {
+			this.options.useAppleFluidBackground = true;
+			this.configureAtmosphereLayerForMode();
+		} else if (!wantFluid && this.fluidRenderer) {
+			this.options.useAppleFluidBackground = false;
+			this.configureAtmosphereLayerForMode();
+		}
+
+		const fluidOn = wantFluid && !!this.fluidRenderer?.isSupported;
+		const cssFallbackOn = enhancedOn || (wantFluid && this.fluidInitFailed);
 		this.apolMusicWannabeEnabled = DataStoreService.apolMusicWannabeEnabled ?? false;
 
 		const effIntensity = dynamics ? Math.min(dynamics.bass, 1.15) : Math.min(this.state.currentIntensity, 1.15);
+		const effEnergy = dynamics ? dynamics.energy : Math.min(this.state.currentIntensity * 0.6, 1);
 
-		// Render multi-layer blur box-shadow ONLY when color changes (not continuous per-frame re-rasterization!)
+		// Render multi-layer blur box-shadow ONLY when color changes (zero per-frame re-rasterization at steady state)
 		if (vignetteColour !== this.lastAppliedVignetteColour) {
 			this.lastAppliedVignetteColour = vignetteColour;
 			this.elements.vignette.style.boxShadow = `
-				inset 0 0 260px 130px rgba(${vignetteColour}, 0.75),
-				inset 0 0 180px 90px rgba(${vignetteColour}, 0.55),
-				inset 0 0 130px 65px rgba(${vignetteColour}, 0.40),
-				inset 100px 0 140px 35px rgba(${vignetteColour}, 0.35),
-				inset 0 80px 140px 35px rgba(${vignetteColour}, 0.30)
+				inset 0 0 260px 130px rgba(${vignetteColour}, 0.72),
+				inset 0 0 180px 90px rgba(${vignetteColour}, 0.52),
+				inset 0 0 130px 65px rgba(${vignetteColour}, 0.36),
+				inset 100px 0 140px 35px rgba(${vignetteColour}, 0.32),
+				inset 0 80px 140px 35px rgba(${vignetteColour}, 0.28)
 			`;
 		}
 
-		// Modulate instant beat reactivity via GPU opacity compositing (zero paint/raster cost)
-		const targetVignetteOpacity = Math.min(0.90, 0.32 + effIntensity * 0.40);
+		// Temper vignette edge weight when WebGL Apple Fluid background is active so the mesh breathes cleanly
+		const targetVignetteOpacity = fluidOn
+			? Math.min(0.86, 0.18 + effIntensity * 0.56)
+			: Math.min(0.94, 0.26 + effIntensity * 0.56);
 		this.elements.vignette.style.opacity = targetVignetteOpacity.toFixed(3);
 
 		if (vignetteColour !== this.lastAppliedGlowColour) {
 			this.lastAppliedGlowColour = vignetteColour;
 			this.elements.glowLayer.style.background = `
-				radial-gradient(ellipse 140% 120% at 35% 70%,
-					rgba(${vignetteColour}, 0.32) 0%,
-					rgba(${vignetteColour}, 0.16) 30%,
-					transparent 70%
+				radial-gradient(ellipse 115% 105% at 30% 50%,
+					rgba(${vignetteColour}, 0.28) 0%,
+					rgba(${vignetteColour}, 0.12) 38%,
+					transparent 72%
 				)
 			`;
 		}
-		const targetGlowOpacity = Math.min(0.72, 0.10 + effIntensity * 0.50);
+		const targetGlowOpacity = Math.min(0.76, 0.08 + effIntensity * 0.52 + effEnergy * 0.14);
 		this.elements.glowLayer.style.opacity = targetGlowOpacity.toFixed(3);
 
-		if (DataStoreService.enhancedBackgroundEnabled) {
-			if (this.cachedAtmospherePalette.length && this.atmosphereCircles.length === 0) {
-				this.createAtmosphereCircles(this.cachedAtmospherePalette);
-			}
+		if (fluidOn) {
 			if (this.atmosphereLayer) {
 				this.atmosphereLayer.style.opacity = '1';
+			}
+			this.fluidRenderer!.render({
+				time: dynamics?.fluidPhase ?? performance.now() * 0.0005,
+				swirlTime: dynamics?.swirlPhase ?? performance.now() * 0.0003,
+				bass: dynamics?.bass ?? this.state.currentCircleIntensity,
+				energy: effEnergy,
+				treble: dynamics?.treble ?? 0,
+				saturation,
+				density: this.options.circleDensity,
+				opacity: this.options.circleOpacity,
+				intensity: this.options.intensityMultiplier,
+				apolMode: this.apolMusicWannabeEnabled,
+				mode: this.options.backgroundMode,
+				dt,
+			});
+		} else if (cssFallbackOn) {
+			if (this.atmosphereLayer) {
+				this.atmosphereLayer.style.opacity = '1';
+			}
+			if (this.cachedAtmospherePalette.length && this.atmosphereCircles.length === 0) {
+				this.createAtmosphereCircles(this.cachedAtmospherePalette);
 			}
 			this.updateAtmosphereCircles(dynamics);
 		} else if (this.atmosphereLayer) {
@@ -1862,13 +2191,17 @@ export class AudioVisualiser implements AudioVisualiserAPI {
 		this.options.intensityMultiplier = Math.max(0, mult);
 	}
 
+	private get isFluidActive(): boolean {
+		return !!(this.options.useAppleFluidBackground || DataStoreService.appleFluidBackgroundEnabled == true) && !!this.fluidRenderer?.isSupported;
+	}
+
 	public setColorSaturation(saturation: number): void {
 		this.options.colorSaturation = Math.max(0, saturation);
-		if (this.atmosphereLayer) {
-			const targetBlur = this.options.backgroundMode === 'images' ? 45 : 100;
-			this.atmosphereLayer.style.filter = `blur(${targetBlur}px) contrast(1.12) brightness(0.52) saturate(${this.options.colorSaturation}) !important`;
+		if (this.atmosphereLayer && !this.isFluidActive) {
+			const targetBlur = this.options.backgroundMode === 'images' ? 35 : 48;
+			this.atmosphereLayer.style.filter = `blur(${targetBlur}px) contrast(1.12) brightness(0.52) saturate(${this.options.colorSaturation})`;
 		}
-		if (this.options.useEnhancedBackground && this.cachedAtmospherePalette.length) {
+		if (this.options.useEnhancedBackground && !this.isFluidActive && this.cachedAtmospherePalette.length) {
 			this.refreshAtmosphereCircles();
 		}
 	}
@@ -1881,42 +2214,77 @@ export class AudioVisualiser implements AudioVisualiserAPI {
 		this.options.useDynamicIntensity = enabled;
 	}
 
-
-
 	public setBackgroundMode(mode: 'circles' | 'images'): void {
 		this.options.backgroundMode = mode;
-		if (this.options.useEnhancedBackground && this.cachedAtmospherePalette.length) {
-			this.createAtmosphereCircles(this.cachedAtmospherePalette);
+		if (this.isFluidActive || this.options.useEnhancedBackground) {
+			if (this.isFluidActive) {
+				if (mode === 'images' && !this.fluidRenderer?.getDebugInfo().hasArtwork) {
+					this.lastCoverUrl = null;
+				}
+				this.updateCoverArt(undefined, mode === 'images');
+			} else if (this.cachedAtmospherePalette.length) {
+				this.createAtmosphereCircles(this.cachedAtmospherePalette);
+			}
 		}
 	}
 
 	public setEnhancedBackground(enabled: boolean): void {
 		this.options.useEnhancedBackground = enabled;
-		if (enabled && this.cachedAtmospherePalette.length && this.atmosphereCircles.length === 0) {
-			this.createAtmosphereCircles(this.cachedAtmospherePalette);
+		if (enabled) {
+			this.updateCoverArt();
+			if (!this.isFluidActive && this.cachedAtmospherePalette.length && this.atmosphereCircles.length === 0) {
+				this.createAtmosphereCircles(this.cachedAtmospherePalette);
+			}
 		}
 		if (this.atmosphereLayer) {
-			this.atmosphereLayer.style.opacity = enabled && this.atmosphereCircles.length > 0 ? '1' : '0';
+			const visible = this.isFluidActive || ((enabled || (DataStoreService.appleFluidBackgroundEnabled == true && this.fluidInitFailed)) && this.atmosphereCircles.length > 0);
+			this.atmosphereLayer.style.opacity = visible ? '1' : '0';
+		}
+	}
+
+	public setAppleFluidBackgroundEnabled(enabled: boolean): void {
+		this.options.useAppleFluidBackground = !!enabled;
+		if (!enabled) {
+			this.fluidInitFailed = false;
+		}
+		this.configureAtmosphereLayerForMode();
+		if (enabled) {
+			const cachedPixels = this.lastCoverUrl ? this.imageCache.get(this.lastCoverUrl)?.pixels : null;
+			if (!this.lastCoverUrl || !cachedPixels) {
+				this.lastCoverUrl = null;
+				this.updateCoverArt(undefined, true);
+			}
+		}
+		if (this.atmosphereLayer) {
+			const visible = this.isFluidActive || ((this.options.useEnhancedBackground || (enabled && this.fluidInitFailed)) && this.atmosphereCircles.length > 0);
+			this.atmosphereLayer.style.opacity = visible ? '1' : '0';
 		}
 	}
 
 	public setApolMusicWannabeEnabled(enabled: boolean): void {
 		this.apolMusicWannabeEnabled = enabled;
-		if (this.cachedAtmospherePalette.length > 0) {
+		if (!this.isFluidActive && this.cachedAtmospherePalette.length > 0) {
 			this.refreshAtmosphereCircles();
 		}
 	}
 
 	public setCircleDensity(density: number): void {
 		this.options.circleDensity = Math.max(0, Math.min(1, density));
-		if (this.options.useEnhancedBackground && this.cachedAtmospherePalette.length > 0) {
+		if (this.options.useEnhancedBackground && !this.isFluidActive && this.cachedAtmospherePalette.length > 0) {
 			this.refreshAtmosphereCircles();
 		}
 	}
 
 	public setCircleOpacity(opacity: number): void {
 		this.options.circleOpacity = Math.max(0, Math.min(1, opacity));
-		this.updateAtmosphereCircles();
+		if (!this.isFluidActive) {
+			this.updateAtmosphereCircles();
+		}
+	}
+
+	public setFluidSpeed(speed: number): void {
+		this.options.fluidSpeed = Math.max(0, Math.min(3, speed));
+		this.dynamicsEngine.setFluidSpeed(this.options.fluidSpeed);
 	}
 
 	public refreshAtmosphereCircles(): void {
@@ -1925,6 +2293,11 @@ export class AudioVisualiser implements AudioVisualiserAPI {
 		this.lastCoverCheckTime = 0;
 		this.currentAppliedCoverUrl = '__init__';
 
+		if (this.isFluidActive) {
+			this.atmosphereLayer.style.opacity = '1';
+			return;
+		}
+
 		if (this.cachedAtmospherePalette.length > 0) {
 			this.createAtmosphereCircles(this.cachedAtmospherePalette);
 		}
@@ -1932,6 +2305,98 @@ export class AudioVisualiser implements AudioVisualiserAPI {
 		if (this.atmosphereLayer) {
 			this.atmosphereLayer.style.opacity = this.options.useEnhancedBackground && this.atmosphereCircles.length > 0 ? '1' : '0';
 		}
+	}
+
+	public getDebugState(): VisualiserDebugState {
+		const glInfo = this.fluidRenderer?.getDebugInfo();
+		const useWebGL = this.isFluidActive && !!(glInfo && glInfo.isSupported);
+		return {
+			wsConnected: this.isConnected(),
+			wsReadyState: this.ws?.readyState ?? WebSocket.CLOSED,
+			lastPacketAgeMs: this.lastWsMessageTime > 0 ? Math.round(performance.now() - this.lastWsMessageTime) : -1,
+			isNowPlayingVisible: !!this.options.isNowPlayingVisible,
+			animationRunning: this.animationFrameId !== null,
+			fps: Math.round(this.smoothedFps),
+			renderer: {
+				type: useWebGL ? 'webgl' : 'css',
+				width: useWebGL ? glInfo.fboWidth : (this.container.offsetWidth || window.innerWidth),
+				height: useWebGL ? glInfo.fboHeight : (this.container.offsetHeight || window.innerHeight),
+				hasArtwork: useWebGL ? glInfo.hasArtwork : !!this.lastCoverUrl,
+				transition: useWebGL ? glInfo.transition : 1,
+				contextLost: useWebGL ? glInfo.contextLost : false,
+			},
+			audio: {
+				trackedBass: this.lastTrackedBass,
+				bass: this.lastDynamics.bass,
+				energy: this.lastDynamics.energy,
+				treble: this.lastDynamics.treble,
+				flowVelocity: this.dynamicsEngine.flowVelocitySpring.value,
+				fluidPhase: this.dynamicsEngine.fluidPhase,
+				bpm: this.dynamicsEngine.currentBPM,
+				lerpFactor: this.options.lerpFactor,
+				isSustainedBass: this.adaptiveBassTracker.isSustainedBass,
+				lastFrequency: this.lastFrequency,
+			},
+			visuals: {
+				vignetteRgb: `${Math.round(this.currentVignetteRgb[0])}, ${Math.round(this.currentVignetteRgb[1])}, ${Math.round(this.currentVignetteRgb[2])}`,
+				palette: [...this.cachedAtmospherePalette],
+				cacheEntries: this.imageCache.size,
+				backgroundMode: this.options.backgroundMode,
+				enhancedBackground: DataStoreService.enhancedBackgroundEnabled == true,
+				appleFluidBackground: this.options.useAppleFluidBackground || DataStoreService.appleFluidBackgroundEnabled == true,
+				apolMode: this.apolMusicWannabeEnabled,
+				intensityMultiplier: this.options.intensityMultiplier,
+				colorSaturation: this.options.colorSaturation,
+				circleDensity: this.options.circleDensity,
+				circleOpacity: this.options.circleOpacity,
+				fluidSpeed: this.options.fluidSpeed,
+				useDynamicLerp: this.options.useDynamicLerp,
+				useDynamicIntensity: this.options.useDynamicIntensity,
+			},
+		};
+	}
+
+	public triggerDebugPulse(bass = 0.95, energy = 0.85, treble = 0.65): void {
+		this.lastTrackedBass = bass;
+		this.dynamicsEngine.bassSpring.setTarget(bass);
+		this.dynamicsEngine.energySpring.setTarget(energy);
+		this.dynamicsEngine.trebleSpring.setTarget(treble);
+		this.updateTargetValues(bass);
+
+		if (this.debugPulseTimer !== null) {
+			clearTimeout(this.debugPulseTimer);
+		}
+		this.debugPulseTimer = window.setTimeout(() => {
+			this.debugPulseTimer = null;
+			// Decay naturally back to rest when no live WS audio stream is active
+			if (this.lastWsMessageTime === 0 || performance.now() - this.lastWsMessageTime > 500) {
+				this.lastTrackedBass = 0;
+				this.dynamicsEngine.bassSpring.setTarget(0);
+				this.dynamicsEngine.energySpring.setTarget(0.08);
+				this.dynamicsEngine.trebleSpring.setTarget(0);
+				this.updateTargetValues(0);
+			}
+		}, 90);
+	}
+
+	public async forceCoverArtRefresh(): Promise<void> {
+		this.lastCoverUrl = null;
+		this.currentAppliedCoverUrl = '__init__';
+		this.imageCache.clear();
+		await this.updateCoverArt(undefined, true);
+	}
+
+	public resetPhysics(): void {
+		if (this.debugPulseTimer !== null) {
+			clearTimeout(this.debugPulseTimer);
+			this.debugPulseTimer = null;
+		}
+		this.lastTrackedBass = 0;
+		this.adaptiveBassTracker?.reset();
+		this.songAdaptationController?.reset();
+		this.bassSpikeDetector?.reset();
+		this.dynamicsEngine?.reset();
+		this.updateTargetValues(0);
 	}
 
 	private memorySweepIntervalId: number | null = null;
@@ -1984,6 +2449,8 @@ export class AudioVisualiser implements AudioVisualiserAPI {
 		const animate = (timestamp: number) => {
 			const dt = Math.max(0.001, Math.min((timestamp - lastTimestamp) * 0.001, 0.1));
 			lastTimestamp = timestamp;
+			const instFps = 1 / dt;
+			this.smoothedFps = this.smoothedFps > 0 ? this.smoothedFps * 0.9 + instFps * 0.1 : instFps;
 
 			if (this.pendingAudioData) {
 				const analysis = this.pendingAudioData;
@@ -2000,10 +2467,15 @@ export class AudioVisualiser implements AudioVisualiserAPI {
 
 			// Advance physical spring dynamics
 			const dynamics = this.dynamicsEngine.updatePhysics(dt);
+			this.lastDynamics.bass = dynamics.bass;
+			this.lastDynamics.energy = dynamics.energy;
+			this.lastDynamics.treble = dynamics.treble;
+			this.lastDynamics.fluidPhase = dynamics.fluidPhase;
+			this.lastDynamics.swirlPhase = dynamics.swirlPhase;
 
 			if (this.options.isNowPlayingVisible) {
 				this.applyLerping(dt);
-				this.applyEffects(this.lastFrequency, dynamics);
+				this.applyEffects(this.lastFrequency, dynamics, dt);
 			}
 			
 			// Keep it going
@@ -2022,6 +2494,18 @@ export class AudioVisualiser implements AudioVisualiserAPI {
 
 	public destroy(): void {
 		document.removeEventListener('visibilitychange', this.onVisibilityChange);
+		if (this.debugPulseTimer !== null) {
+			clearTimeout(this.debugPulseTimer);
+			this.debugPulseTimer = null;
+		}
+		this.clearCoverRetryTimers();
+		this.coverArtObserver?.disconnect();
+		this.coverArtObserver = null;
+		this.observedImageryEl = null;
+		this.resizeObserver?.disconnect();
+		this.resizeObserver = null;
+		this.fluidRenderer?.destroy();
+		this.fluidRenderer = null;
 		this.stopMemorySweep();
 		this.disconnect();
 		this.stopAnimationLoop();
